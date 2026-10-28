@@ -18,6 +18,7 @@ mlruns/
 *.tfvars
 !*.tfvars.example
 crash.log
+.vscode/
 
 mlflow.db
 mlartifacts/

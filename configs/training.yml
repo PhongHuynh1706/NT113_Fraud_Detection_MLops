@@ -1,0 +1,107 @@
+
+# ==========================================
+# DATA CONFIGURATION
+# ==========================================
+data:
+  path: data/creditcard_2026.csv
+  target: is_fraud
+  datetime_column: transaction_datetime
+
+  train_ratio: 0.70
+  validation_ratio: 0.15
+  test_ratio: 0.15
+
+  random_seed: 42
+
+
+# ==========================================
+# MODEL CONFIGURATION
+# ==========================================
+model:
+  # Supported: catboost, lightgbm, xgboost
+  algorithm: catboost
+
+  # ----------------------------------------
+  # CATBOOST
+  # ----------------------------------------
+  catboost:
+    iterations: 600
+    depth: 6
+    learning_rate: 0.05
+
+    loss_function: Logloss
+    eval_metric: AUC
+
+    auto_class_weights: Balanced
+    early_stopping_rounds: 50
+    verbose: 100
+
+  # ----------------------------------------
+  # LIGHTGBM
+  # ----------------------------------------
+  lightgbm:
+    n_estimators: 600
+    learning_rate: 0.05
+    max_depth: 6
+    num_leaves: 31
+
+    objective: binary
+    class_weight: balanced
+
+    subsample: 0.8
+    colsample_bytree: 0.8
+
+    reg_alpha: 0.0
+    reg_lambda: 1.0
+
+    verbosity: -1
+
+    early_stopping_rounds: 50
+
+  # ----------------------------------------
+  # XGBOOST
+  # ----------------------------------------
+  xgboost:
+    n_estimators: 600
+    learning_rate: 0.05
+    max_depth: 6
+
+    objective: binary:logistic
+    eval_metric: aucpr
+
+    subsample: 0.8
+    colsample_bytree: 0.8
+
+    reg_alpha: 0.0
+    reg_lambda: 1.0
+
+    tree_method: hist
+
+    early_stopping_rounds: 50
+
+
+# ==========================================
+# EVALUATION CONFIGURATION
+# ==========================================
+evaluation:
+  optimize_threshold_for: f1
+  custom_threshold: 0.80
+
+  primary_metric: pr_auc
+
+  metrics:
+    - pr_auc
+    - roc_auc
+    - precision
+    - recall
+    - f1
+
+
+# ==========================================
+# MLFLOW CONFIGURATION
+# ==========================================
+mlflow:
+  tracking_uri: http://127.0.0.1:5000
+  experiment_name: fraud-detection-training
+  registered_model_name: fraud-detection-model
+  candidate_alias: candidate

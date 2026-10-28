@@ -72,14 +72,29 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push Docker image
+      - name: Build Docker image
         uses: docker/build-push-action@v7
         with:
           context: .
           file: ${{ matrix.dockerfile }}
-          push: true
+          load: true
+          push: false
           platforms: linux/amd64
           tags: |
             phonghuynh1706/nt113:fraud-detection-${{ matrix.component }}-latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Scan Docker image with Trivy
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          image-ref: phonghuynh1706/nt113:fraud-detection-${{ matrix.component }}-latest
+          format: table
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Push Docker image
+        run: |
+          docker push phonghuynh1706/nt113:fraud-detection-${{ matrix.component }}-latest

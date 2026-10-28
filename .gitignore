@@ -22,4 +22,3 @@ crash.log
 
 mlflow.db
 mlartifacts/
-model/

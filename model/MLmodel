@@ -1,0 +1,57 @@
+artifact_path: mlflow-artifacts:/1/models/m-32435c9e3eab45ef875ae58fa15c88f5/artifacts
+flavors:
+  python_function:
+    cloudpickle_version: 3.1.2
+    code: code
+    env:
+      conda: conda.yaml
+      virtualenv: python_env.yaml
+    loader_module: mlflow.pyfunc.model
+    python_model: python_model.pkl
+    python_version: 3.11.18
+    streamable: false
+is_signature_from_type_hint: false
+mlflow_version: 3.17.2
+model_id: m-32435c9e3eab45ef875ae58fa15c88f5
+model_size_bytes: 500274
+model_uuid: m-32435c9e3eab45ef875ae58fa15c88f5
+prompts: null
+run_id: 7e42905656e14dd6b6d70077ac93f35b
+saved_input_example_info:
+  artifact_path: input_example.json
+  pandas_orient: split
+  serving_input_path: serving_input_example.json
+  type: dataframe
+signature:
+  inputs: '[{"type": "double", "name": "transaction_amount", "required": true}, {"type":
+    "double", "name": "transaction_hour", "required": true}, {"type": "double", "name":
+    "customer_age", "required": true}, {"type": "double", "name": "account_age_days",
+    "required": true}, {"type": "double", "name": "credit_limit", "required": true},
+    {"type": "double", "name": "credit_score", "required": true}, {"type": "double",
+    "name": "num_cards_held", "required": true}, {"type": "double", "name": "transactions_last_1h",
+    "required": true}, {"type": "double", "name": "transactions_last_24h", "required":
+    true}, {"type": "double", "name": "transactions_last_7d", "required": true}, {"type":
+    "double", "name": "amount_last_1h", "required": true}, {"type": "double", "name":
+    "amount_last_24h", "required": true}, {"type": "double", "name": "days_since_last_transaction",
+    "required": true}, {"type": "double", "name": "distance_from_home_km", "required":
+    true}, {"type": "double", "name": "distance_from_last_tx_km", "required": true},
+    {"type": "double", "name": "amount_vs_avg_ratio", "required": true}, {"type":
+    "double", "name": "avg_transaction_amount_30d", "required": true}, {"type": "double",
+    "name": "std_transaction_amount_30d", "required": true}, {"type": "double", "name":
+    "num_declined_last_30d", "required": true}, {"type": "double", "name": "num_chargebacks_ever",
+    "required": true}, {"type": "string", "name": "merchant_category", "required":
+    true}, {"type": "string", "name": "merchant_country", "required": true}, {"type":
+    "string", "name": "transaction_day_of_week", "required": true}, {"type": "string",
+    "name": "customer_gender", "required": true}, {"type": "string", "name": "customer_state",
+    "required": true}, {"type": "string", "name": "transaction_channel", "required":
+    true}, {"type": "string", "name": "device_type", "required": true}, {"type": "string",
+    "name": "browser", "required": true}, {"type": "string", "name": "email_domain",
+    "required": true}, {"type": "long", "name": "card_present", "required": true},
+    {"type": "long", "name": "international_transaction", "required": true}, {"type":
+    "long", "name": "high_risk_country", "required": true}, {"type": "long", "name":
+    "used_chip", "required": true}, {"type": "long", "name": "used_pin", "required":
+    true}, {"type": "long", "name": "is_weekend", "required": true}]'
+  outputs: '[{"type": "tensor", "tensor-spec": {"dtype": "float64", "shape": [-1]}}]'
+  params: null
+type_hint_from_example: false
+utc_time_created: '2026-10-28 05:50:01.161150'

@@ -13,9 +13,7 @@ def test_predict_fraud(sample_transaction):
     predictor = FraudPredictor.__new__(FraudPredictor)
 
     predictor.model = Mock()
-    predictor.model.predict_proba.return_value = np.array([
-        [0.05, 0.95]
-    ])
+    predictor.model.predict.return_value = np.array([0.95])
 
     predictor.preprocessing = {
         "numeric_medians": {
@@ -39,9 +37,7 @@ def test_predict_legitimate(sample_transaction):
     predictor = FraudPredictor.__new__(FraudPredictor)
 
     predictor.model = Mock()
-    predictor.model.predict_proba.return_value = np.array([
-        [0.9, 0.1]
-    ])
+    predictor.model.predict.return_value = np.array([0.1])
 
     predictor.preprocessing = {
         "numeric_medians": {

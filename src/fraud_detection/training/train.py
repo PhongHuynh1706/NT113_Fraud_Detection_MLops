@@ -26,14 +26,13 @@ from fraud_detection.training.mlflow_logger import (
     log_inference_artifacts,
     log_model,
 )
-
+from fraud_detection.utils.config_loader import load_config
 
 def train(config_path, threshold_override=None):
     # ==========================================
     # 1. LOAD CONFIGURATION
     # ==========================================
-    with open(config_path, encoding="utf-8") as f:
-        config = yaml.safe_load(f)
+    config = load_config(config_path)
 
     data_config = config["data"]
     model_section = config["model"]

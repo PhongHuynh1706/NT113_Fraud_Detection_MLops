@@ -5,11 +5,10 @@ import os
 import mlflow
 import yaml
 from mlflow.tracking import MlflowClient
-
+from fraud_detection.utils.config_loader import load_config
 
 def register_model(config_path, model_uri, alias=None):
-    with open(config_path, encoding="utf-8") as f:
-        config = yaml.safe_load(f)
+    config = load_config(config_path)
 
     mlflow_config = config["mlflow"]
 

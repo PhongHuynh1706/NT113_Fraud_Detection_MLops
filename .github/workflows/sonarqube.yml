@@ -45,17 +45,25 @@ jobs:
             --cov=fraud_detection \
             --cov-report=xml:coverage.xml \
             --cov-report=term-missing
-      - name: Verify SonarQube configuration
+
+      - name: Validate SonarQube Token
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        shell: bash
         run: |
-          if [ -z "$SONAR_TOKEN" ]; then
-            echo "::error::SONAR_TOKEN is missing"
+          RESPONSE=$(curl --silent --show-error --fail \
+            --user "$SONAR_TOKEN:" \
+            "https://sonarcloud.io/api/authentication/validate")
+
+          echo "$RESPONSE"
+
+          if ! echo "$RESPONSE" | jq -e '.valid == true' > /dev/null; then
+            echo "::error::Invalid SonarQube token"
             exit 1
           fi
 
-          echo "SONAR_TOKEN is configured"
-          
+          echo "SonarQube token is valid"
+
       - name: SonarQube Scan
         uses: SonarSource/sonarqube-scan-action@v6
         env:

@@ -52,6 +52,9 @@ COPY model/ /app/model/
 RUN useradd --create-home appuser && \
     chown -R appuser:appuser /app
 
+# Remove unused system packaging tools and vendored dependencies
+RUN python -m pip uninstall -y setuptools wheel
+
 USER appuser
 
 EXPOSE 8000

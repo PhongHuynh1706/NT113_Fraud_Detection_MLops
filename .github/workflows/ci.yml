@@ -84,26 +84,24 @@ jobs:
             phonghuynh1706/nt113:fraud-detection-${{ matrix.component }}-latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-      - name: Diagnose Trivy download
+      
+      - name: Inspect Python dependencies
         shell: bash
         run: |
-          set -x
+          IMAGE="phonghuynh1706/nt113:fraud-detection-${{ matrix.component }}-latest"
 
-          echo "=== DNS lookup ==="
-          getent hosts github.com || true
-          getent hosts api.github.com || true
-          getent hosts release-assets.githubusercontent.com || true
-
-          echo "=== GitHub API ==="
-          curl -IL --connect-timeout 10 --max-time 30 \
-            https://api.github.com/repos/aquasecurity/trivy/releases/tags/v0.69.3 \
-            || true
-
-          echo "=== Trivy release archive ==="
-          curl -IL --connect-timeout 10 --max-time 30 \
-            https://github.com/aquasecurity/trivy/releases/download/v0.69.3/trivy_0.69.3_Linux-64bit.tar.gz \
-            || true
+          docker run --rm \
+            --entrypoint /bin/sh \
+            "$IMAGE" \
+            -c '
+              echo "=== Installed package metadata ==="
+              find /usr/local/lib /opt/venv \
+                \( -iname "*setuptools*.dist-info" \
+                -o -iname "*wheel*.dist-info" \
+                -o -iname "*jaraco.context*.dist-info" \
+                -o -iname "*jaraco_context*.dist-info" \) \
+                -print 2>/dev/null || true
+            '
 
       - name: Scan Docker image with Trivy
         shell: bash

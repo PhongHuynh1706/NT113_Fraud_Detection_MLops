@@ -1,23 +1,35 @@
 
-# Stage 1: Build dependencies
+# =========================
+# Stage 1: Builder
+# =========================
 FROM python:3.11-slim AS builder
 
 WORKDIR /app
 
-ENV PIP_NO_CACHE_DIR=1
+ENV PIP_NO_CACHE_DIR=1 \
+    PATH="/opt/venv/bin:$PATH"
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        libgomp1 && \
+    rm -rf /var/lib/apt/lists/*
 
 RUN python -m venv /opt/venv
-
-ENV PATH="/opt/venv/bin:$PATH"
 
 COPY pyproject.toml ./
 COPY src/ ./src/
 
-RUN pip install --upgrade pip setuptools wheel \
-    && pip install . \
-    && pip check
+RUN python -m pip install --upgrade pip setuptools wheel && \
+    pip install . && \
+    pip check
 
+# Remove packaging tools from virtual environment
+RUN pip uninstall -y setuptools wheel pip
+
+# =========================
 # Stage 2: Runtime
+# =========================
 FROM python:3.11-slim AS runtime
 
 WORKDIR /app
@@ -28,19 +40,17 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     MODEL_DIR=/app/model \
     PATH="/opt/venv/bin:$PATH"
 
-# Copy Python environment
-COPY --from=builder /opt/venv /opt/venv
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        libgomp1 && \
+    rm -rf /var/lib/apt/lists/*
 
-# Copy model artifacts
+COPY --from=builder /opt/venv /opt/venv
 COPY model/ /app/model/
 
-# Remove build tools not required at runtime
-RUN /opt/venv/bin/python -m pip uninstall -y \
-      pip setuptools wheel || true
-
-# Non-root user
-RUN useradd --create-home appuser \
-    && chown -R appuser:appuser /app /opt/venv
+RUN useradd --create-home appuser && \
+    chown -R appuser:appuser /app
 
 USER appuser
 

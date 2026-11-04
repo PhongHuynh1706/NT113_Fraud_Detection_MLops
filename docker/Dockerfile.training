@@ -26,10 +26,6 @@ COPY configs/ ./configs/
 
 # Install project and patched dependencies
 RUN python -m pip install . && \
-    python -m pip install --upgrade \
-        "jaraco.context>=6.1.0" \
-        "msgpack>=1.2.3" \
-        "urllib3>=2.8.0" && \
     python -m pip check
 
 # Run as non-root user

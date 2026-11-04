@@ -84,6 +84,7 @@ jobs:
             phonghuynh1706/nt113:fraud-detection-${{ matrix.component }}-latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
       - name: Diagnose Trivy download
         shell: bash
         run: |
@@ -105,14 +106,21 @@ jobs:
             || true
 
       - name: Scan Docker image with Trivy
-        uses: aquasecurity/trivy-action@0.35.0
-        with:
-          image-ref: phonghuynh1706/nt113:fraud-detection-${{ matrix.component }}-latest
-          format: table
-          vuln-type: os,library
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
-          exit-code: "1"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$HOME/.cache/trivy:/root/.cache/" \
+            aquasec/trivy:0.69.3 \
+            image \
+            --format table \
+            --vuln-type os,library \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed \
+            --exit-code 1 \
+            "phonghuynh1706/nt113:fraud-detection-${{ matrix.component }}-latest"
 
       - name: Push Docker image
         run: |

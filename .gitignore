@@ -20,5 +20,11 @@ mlruns/
 crash.log
 .vscode/
 
+.coverage
+.coveragerc
+coverage.xml
+src/fraud_detection_detection_mlops.egg-info/
+
 mlflow.db
 mlartifacts/
+

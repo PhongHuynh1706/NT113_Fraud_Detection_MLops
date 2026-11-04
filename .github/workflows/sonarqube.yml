@@ -45,7 +45,17 @@ jobs:
             --cov=fraud_detection \
             --cov-report=xml:coverage.xml \
             --cov-report=term-missing
+      - name: Verify SonarQube configuration
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          if [ -z "$SONAR_TOKEN" ]; then
+            echo "::error::SONAR_TOKEN is missing"
+            exit 1
+          fi
 
+          echo "SONAR_TOKEN is configured"
+          
       - name: SonarQube Scan
         uses: SonarSource/sonarqube-scan-action@v6
         env:

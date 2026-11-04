@@ -84,6 +84,25 @@ jobs:
             phonghuynh1706/nt113:fraud-detection-${{ matrix.component }}-latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: Diagnose Trivy download
+        shell: bash
+        run: |
+          set -x
+
+          echo "=== DNS lookup ==="
+          getent hosts github.com || true
+          getent hosts api.github.com || true
+          getent hosts release-assets.githubusercontent.com || true
+
+          echo "=== GitHub API ==="
+          curl -IL --connect-timeout 10 --max-time 30 \
+            https://api.github.com/repos/aquasecurity/trivy/releases/tags/v0.69.3 \
+            || true
+
+          echo "=== Trivy release archive ==="
+          curl -IL --connect-timeout 10 --max-time 30 \
+            https://github.com/aquasecurity/trivy/releases/download/v0.69.3/trivy_0.69.3_Linux-64bit.tar.gz \
+            || true
 
       - name: Scan Docker image with Trivy
         uses: aquasecurity/trivy-action@0.35.0

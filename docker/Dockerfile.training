@@ -1,34 +1,73 @@
 
-FROM python:3.11-slim
-
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
-    MLFLOW_TRACKING_URI=http://host.docker.internal:5000
+# =========================
+# Stage 1: Builder
+# =========================
+FROM python:3.11-slim AS builder
 
 WORKDIR /app
 
-# Install system dependencies for LightGBM
+ENV PIP_NO_CACHE_DIR=1 \
+    PATH="/opt/venv/bin:$PATH"
+
+# System dependencies
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ca-certificates \
         libgomp1 && \
     rm -rf /var/lib/apt/lists/*
 
-# Upgrade Python packaging tools
-RUN python -m pip install --upgrade \
-    pip setuptools wheel
+# Create isolated Python environment
+RUN /usr/local/bin/python -m venv /opt/venv
 
 # Copy project files
 COPY pyproject.toml ./
 COPY src/ ./src/
 COPY configs/ ./configs/
 
-# Install project and patched dependencies
-RUN python -m pip install . && \
-    python -m pip check
+# Install Python dependencies
+RUN /opt/venv/bin/python -m pip install --upgrade \
+        pip setuptools wheel && \
+    /opt/venv/bin/python -m pip install . && \
+    /opt/venv/bin/python -m pip check
 
-# Run as non-root user
+# Remove packaging tools from venv
+RUN /opt/venv/bin/python -m pip uninstall -y \
+        setuptools wheel pip
+
+# =========================
+# Stage 2: Runtime
+# =========================
+FROM python:3.11-slim AS runtime
+
+WORKDIR /app
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    MLFLOW_TRACKING_URI=http://host.docker.internal:5000 \
+    PATH="/opt/venv/bin:$PATH"
+
+# Runtime system dependencies
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        libgomp1 && \
+    rm -rf /var/lib/apt/lists/*
+
+# Copy Python environment
+COPY --from=builder /opt/venv /opt/venv
+
+# Copy training configurations
+COPY --from=builder /app/configs /app/configs
+
+# Remove unused system packaging tools
+RUN /usr/local/bin/python -m pip uninstall -y \
+        setuptools wheel && \
+    if [ -d /usr/local/lib/python3.11/site-packages/setuptools ]; then \
+        echo "ERROR: setuptools directory still exists"; \
+        exit 1; \
+    fi
+
+# Create non-root user
 RUN useradd --create-home appuser && \
     chown -R appuser:appuser /app
 

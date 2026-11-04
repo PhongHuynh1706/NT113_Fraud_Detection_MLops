@@ -15,17 +15,21 @@ RUN apt-get update && \
         libgomp1 && \
     rm -rf /var/lib/apt/lists/*
 
-RUN python -m venv /opt/venv
+# Create isolated virtual environment
+RUN /usr/local/bin/python -m venv /opt/venv
 
 COPY pyproject.toml ./
 COPY src/ ./src/
 
-RUN python -m pip install --upgrade pip setuptools wheel && \
-    pip install . && \
-    pip check
+# Install project dependencies
+RUN /opt/venv/bin/python -m pip install --upgrade \
+        pip setuptools wheel && \
+    /opt/venv/bin/python -m pip install . && \
+    /opt/venv/bin/python -m pip check
 
-# Remove packaging tools from virtual environment
-RUN pip uninstall -y setuptools wheel pip
+# Remove packaging tools from serving venv
+RUN /opt/venv/bin/python -m pip uninstall -y \
+        setuptools wheel pip
 
 # =========================
 # Stage 2: Runtime
@@ -46,14 +50,24 @@ RUN apt-get update && \
         libgomp1 && \
     rm -rf /var/lib/apt/lists/*
 
+# Copy installed application dependencies
 COPY --from=builder /opt/venv /opt/venv
+
+# Copy trained model
 COPY model/ /app/model/
 
+# Remove unused packaging tools from system Python
+# This targets the vendored packages inside setuptools
+RUN /usr/local/bin/python -m pip uninstall -y \
+        setuptools wheel && \
+    if [ -d /usr/local/lib/python3.11/site-packages/setuptools ]; then \
+        echo "ERROR: setuptools directory still exists"; \
+        exit 1; \
+    fi
+
+# Create non-root user
 RUN useradd --create-home appuser && \
     chown -R appuser:appuser /app
-
-# Remove unused system packaging tools and vendored dependencies
-RUN python -m pip uninstall -y setuptools wheel
 
 USER appuser
 

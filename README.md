@@ -259,11 +259,11 @@ Giữ image nếu cần lặp lại. Không chạy prune toàn bộ hoặc xóa 
 
 1. PR, push main hoặc Run workflow kích hoạt lint/tests/coverage. Push/manual chạy SonarQube Cloud và đợi Quality Gate; PR hiện bỏ qua Sonar. Cần secret `SONAR_TOKEN`; `SONAR_HOST_URL` mặc định `https://sonarcloud.io`. Không có công tắc `SONAR_ENABLED` trong workflow hiện tại.
 2. Sonar dùng [sonar-project.properties](sonar-project.properties): projectKey `PhongHuynh1706_NT113_Fraud_Detection_MLops`, organization `phonghuynh1706`, coverage từ `coverage.xml`. Kiểm tra log upload rồi Quality Gate và trang Issues/Coverage; upload thành công chưa có nghĩa gate đạt.
-3. CI render Kustomize, validate hai Terraform roots test/production và chạy AWS mock tests; đây chưa phải apply. Khi job test đạt, job image build một image, smoke không có model (ready503 là mong đợi), scan Trivy HIGH/CRITICAL.
+3. CI render Kustomize để kiểm tra manifests; Terraform không chạy trong CI, kiểm tra thủ công theo Terraform README. Khi job test đạt, job image build một image, smoke không có model (ready503 là mong đợi), scan Trivy HIGH/CRITICAL.
 4. Chỉ sự kiện push publish image đã scan lên GHCR theo commitSHA; PR/manual không publish. Xem digest trong log publish để truy vết image chính xác.
-5. Job deploy-test chỉ chạy khi push và repository variable `ENABLE_TEST_DEPLOY=true`. **Trong giai đoạn chỉ local, giữ variable này không bật; không chạy [deploy.yaml](.github/workflows/deploy.yaml).** Workflow deploy có thao tác apply thật khi được chạy với đủ cấu hình.
+5. CI hiện không gọi deploy-test sau push để giữ phạm vi chưa thay đổi hạ tầng thực tế. [deploy.yaml](.github/workflows/deploy.yaml) vẫn là workflow riêng có thao tác apply thật khi được chạy với đủ cấu hình; chưa chạy workflow đó.
 
-CI không train raw dataset local và không kiểm tra candidate có tốt hơn v2. Vì vậy CI xanh không tự đồng nghĩa một model mới đã được đánh giá/đóng gói/triển khai. Không push chỉ để xem model; push main có thể publish image và có thể deploy nếu repository đã bật biến nêu trên.
+CI không train raw dataset local và không kiểm tra candidate có tốt hơn v2. Vì vậy CI xanh không tự đồng nghĩa một model mới đã được đánh giá/đóng gói/triển khai. Không push chỉ để xem model; push main có thể publish image; CI hiện không tự deploy.
 
 ## 10. Metrics và load test local tùy chọn
 

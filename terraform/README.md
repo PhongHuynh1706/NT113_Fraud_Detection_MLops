@@ -1,4 +1,4 @@
-﻿# Terraform AWS/EKS theo module
+# Terraform AWS/EKS theo module
 
 Chỉ có hai root môi trường: [test](environments/test/) và [production](environments/production/). `main.tf` mỗi root chỉ gọi module và nối dependency; variables/providers/outputs/versions nằm ở file riêng. Chưa plan/apply AWS thật hoặc tạo tài nguyên tính phí.
 
@@ -84,6 +84,6 @@ terraform -chdir=terraform/environments/production init -backend=false -lockfile
 terraform -chdir=terraform/environments/production validate
 ```
 
-CI chạy cùng validate hai root và mock tests. Tests dùng mock AWS/Kubernetes, `command=plan`, không credentials/apply AWS thật: kiểm tra topology/NAT, chặn world-open API/scaling sai/AZ trùng, OS/type cố định, hai bucket và namespace bật/tắt. Init chỉ tải provider; validate không chứng minh quota/account/AMI/EKS version khả dụng.
+Terraform không nằm trong CI theo yêu cầu; chạy validate và mock tests thủ công bằng các lệnh trên. Tests dùng mock AWS/Kubernetes, `command=plan`, không credentials/apply AWS thật: kiểm tra topology/NAT, chặn world-open API/scaling sai/AZ trùng, OS/type cố định, hai bucket và namespace bật/tắt. Init chỉ tải provider; validate không chứng minh quota/account/AMI/EKS version khả dụng.
 
 Chưa chạy plan/apply thật. Khi đã xác nhận account, IAM, budget và state thì mới chạy plan cho đúng môi trường, xem toàn bộ create/update/destroy và chỉ apply khi được phép. EKS, EC2 t3.large, EBS, NAT/EIP, S3, ECR, logs và data transfer sẽ tính phí khi sử dụng; không tự tạo backend hoặc triển khai production trong thay đổi này.

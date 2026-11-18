@@ -20,9 +20,9 @@ jobs:
         with:
           python-version: '3.11'
           cache: pip
-      - run: pip install -e '.[dev]'
-      - run: ruff check .
-      - run: pytest --cov=fraud_detection --cov-report=xml --cov-report=term-missing --cov-fail-under=80
+      - run: python -m pip install -e '.[dev]'
+      - run: python -m ruff check .
+      - run: python -m pytest --cov=fraud_detection --cov-report=xml --cov-report=term-missing --cov-fail-under=80
       - name: Check SonarQube credentials
         if: github.event_name != 'pull_request'
         env:
@@ -48,17 +48,6 @@ jobs:
       - run: |
           kubectl kustomize K8s/overlays/test > /tmp/test.yaml
           kubectl kustomize K8s/overlays/production > /tmp/production.yaml
-      - uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.14.9
-      - run: terraform fmt -check -recursive terraform
-      - run: |
-          for environment in test production; do
-            terraform -chdir=terraform/environments/$environment init -backend=false -lockfile=readonly
-            terraform -chdir=terraform/environments/$environment validate
-          done
-      - name: Test AWS module topology without AWS credentials
-        run: terraform -chdir=terraform/environments/test test
       - uses: actions/upload-artifact@v4
         with:
           name: coverage
@@ -112,11 +101,3 @@ jobs:
           docker push "$image"
           digest=$(docker inspect --format='{{index .RepoDigests 0}}' "$image")
           echo "image=$digest" >> "$GITHUB_OUTPUT"
-  deploy-test:
-    needs: image
-    if: github.event_name == 'push' && vars.ENABLE_TEST_DEPLOY == 'true'
-    uses: ./.github/workflows/deploy.yaml
-    with:
-      environment: test
-      image: ${{ needs.image.outputs.image }}
-    secrets: inherit

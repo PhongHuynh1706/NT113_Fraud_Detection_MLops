@@ -34,3 +34,5 @@ terraform.tfvars
 *.key
 kubeconfig*
 .deploy/
+/AGENTS.md
+.md

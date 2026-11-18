@@ -1,259 +1,299 @@
-# MLOps Fraud Detection
+﻿# MLOps Fraud Detection
 
-Khung nền tảng phục vụ model phát hiện gian lận: FastAPI, MLflow, Docker,
-GitHub Actions, Kubernetes HPA, Prometheus/Grafana, Terraform và Locust.
+Dự án phát hiện gian lận với scikit-learn, MLflow, FastAPI, Docker và GitHub Actions; có cấu hình Kubernetes HPA, Prometheus/Grafana, Terraform và Locust cho giai đoạn triển khai sau.
 
-Pipeline hiện dùng ULB/Worldline (`dataset/creditcard.csv`), nhãn `Class`, đầu vào
-`V1`–`V28` và `Amount`. Extra Trees được train theo thời gian `Time`, khử trùng vector
-trước split và chọn threshold trên validation. Chỉ đăng ký khi accuracy >60%, precision >60%
-và vượt baseline về F1/AP; recall luôn được báo cáo, chưa có ngưỡng nghiệp vụ được xác nhận.
-Đây là benchmark offline, chưa phải xác nhận model đủ điều kiện quyết định giao dịch thật.
-Các model tổng hợp trong tests chỉ kiểm tra hợp đồng tích hợp, không đo chất lượng fraud detection.
-Dữ liệu `creditcard.csv` được giữ cục bộ, không dùng làm payload ví dụ và
-được loại khỏi Git cũng như Docker build context.
+## 1. Trạng thái và cách dùng hướng dẫn
 
-## Chạy cục bộ
+Hướng dẫn này mô tả **kiểm tra thủ công trên máy local**. Các lệnh bên dưới là quy trình để người dùng chạy, không phải tuyên bố mọi lệnh đã được thực thi lại khi viết README. Không cần train lại chỉ để xem model.
 
-Huấn luyện từ thư mục gốc bằng cấu hình mặc định:
+- Model đang chọn: **FraudDetection v2**, Extra Trees 200 cây, threshold `0.27963616586275475`.
+- Test ULB đã đo: precision **84,7826%**, recall **75%**, F1 **0,79592**, AP **0,78188**, accuracy **99,9516%**; confusion matrix `[[41291,7],[13,39]]`.
+- Đã thử thêm 4 cấu hình rồi 3 cấu hình: không vượt điều kiện cải thiện nên không đăng ký version mới hoặc build Docker mới cho các candidate đó.
+- V1/v2 đã có trong MLflow server local cổng5000. Model v2 đã kiểm tra HTTP API trên host; container từng được kiểm chứng với v1. **Chưa xác minh container v2 bằng các bước dưới đây.**
+- CI tự build/scan image API theo sự kiện GitHub; **chưa nối điều kiện model tốt hơn với build Docker**. Docker image hiện chứa API/dependency; model được mount hoặc tải từ Registry lúc khởi động.
+- Chưa triển khai cluster/production trong phạm vi hiện tại. Không chạy deploy workflow, Terraform apply hay kubectl apply khi làm theo bài kiểm tra local này.
+
+Luồng cần hiểu:
+
+```text
+Raw data → kiểm tra/làm sạch → train/validation/test theo thời gian
+         → train và chọn model/threshold trên validation
+         → đánh giá model đã khóa trên test → gate → MLflow Registry
+         → chọn manifest/version cụ thể → API → Docker → smoke test/scan
+         → [giai đoạn sau: triển khai, giám sát, load test autoscaling]
+```
+
+Mỗi mũi tên là một bước kiểm soát riêng. Đăng ký model không tự đổi model API đang chạy; build image không chứng minh chất lượng model; readiness200 không chứng minh precision tốt.
+
+## 2. Chuẩn bị môi trường và kiểm thử mã
+
+Mở PowerShell tại thư mục gốc:
 
 ```powershell
+Set-Location D:/MLops_Fraud_Detection
 conda activate fraud-mlops
-python -m fraud_detection.train --config configs/training.json --tracking-uri http://127.0.0.1:5000
+Get-Command python
+python --version
+python -m pip show scikit-learn mlflow
 ```
 
-Mỗi lần train tạo run/version mới khi đạt gate. Không train lại chỉ để xem model.
-Mở MLflow tại http://localhost:5000 để xem experiment và Registered Models.
-CLI mặc định ghi vào server này, có thể đổi bằng `MLFLOW_TRACKING_URI` hoặc `--tracking-uri`.
-Backend SQLite cũ trong `artifacts/mlflow.db` là kho riêng; v1/v2 được sao chép sang server
-bằng `python -m workflow.sync_mlflow`, không train lại. Server Docker phải chạy khi dùng backend HTTP.
-API đọc manifest local sau huấn luyện. Artifact/manifest chứa đường dẫn local,
-cần điều chỉnh khi chuyển máy. Đồng bộ Registry không tự đổi model đang phục vụ.
+**Quan sát:** interpreter thuộc môi trường `fraud-mlops`, không phải Conda base. Môi trường đã dùng huấn luyện là Python3.11.18, scikit-learn1.9.1, MLflow3.17.2; server Docker dùng MLflow3.18.0. Xem dependency thực tế trong artifact từng run khi so sánh môi trường. Dự án khai báo Python>=3.11,<3.14; CI hiện kiểm tra3.11, chưa xác nhận mọi runtime trong khoảng này.
+
+Chỉ cài nếu môi trường thiếu package/project chưa được cài editable:
 
 ```powershell
-$env:MODEL_MANIFEST = 'D:/MLops_Fraud_Detection/artifacts/manifest.json'
-uvicorn fraud_detection.api:app --host 127.0.0.1 --port 8000 --no-access-log
+python -m pip install -e '.[dev,load]'
 ```
 
-Payload tổng hợp đúng schema ULB để thử `/predict`:
+**Tại sao:** editable giúp import mã trong [src/](src/) khi chạy module. Không tự cài lại môi trường đã hoạt động vì có thể đổi dependency. Khai báo tại [pyproject.toml](pyproject.toml); dependency runtime chưa được khóa toàn bộ.
+
+Đặt file tạm ở ổD, rồi kiểm tra mã trước khi train:
+
+```powershell
+New-Item -ItemType Directory -Force artifacts/test-tmp | Out-Null
+$env:TEMP = 'D:/MLops_Fraud_Detection/artifacts/test-tmp'
+$env:TMP = $env:TEMP
+$env:PYTHONIOENCODING = 'utf-8'
+python -m ruff check .
+python -m ruff format --check .
+python -m pytest --cov=fraud_detection --cov-report=xml --cov-report=term-missing --cov-fail-under=80
+```
+
+**Quan sát:** tests/lint phải đạt; coverage là tỷ lệ mã được kiểm tra, **không phải accuracy model**. Bộ test đầy đủ gần nhất đã ghi nhận39 passed/coverage93,45%; sau thêm CLI chọn cấu hình, test selection riêng1 passed và Ruff đạt. Chạy lệnh trên để biết kết quả hiện tại của checkout của bạn.
+
+## 3. Kiểm tra dữ liệu và mở đúng MLflow backend
+
+```powershell
+Test-Path dataset/creditcard.csv
+Get-FileHash dataset/creditcard.csv -Algorithm SHA256
+Get-Content configs/training.json -Raw
+```
+
+**Quan sát:** file tồn tại; SHA256 bản đã dùng:
+
+```text
+76274b691b16a6c49d3f159c883398e03ccd6d1ee12d9d8ee38f4b4b98551a89
+```
+
+Dataset ULB/Worldline:284807 dòng/492 fraud trước làm sạch. Pipeline kiểm tra schema/nhãn/số hữu hạn, giữ Time sớm nhất cho mỗi vector29 feature trùng, còn275663 dòng/473 fraud. Input `V1`–`V28`,`Amount`; `Class` là nhãn; `Time` chỉ chia tập, không đưa vào model.
+
+| Tập | Dòng | Fraud | Time |
+|---|---:|---:|---|
+| Train | 192963 | 365 | 0–132628 |
+| Validation | 41350 | 56 | 132629–151045 |
+| Test | 41350 | 52 | 151046–172792 |
+
+**Tại sao:** chia thời gian mô phỏng dự đoán tương lai, không tách cùng timestamp. Loại vector lặp giảm nguy cơ cùng đầu vào xuất hiện ở nhiều tập. Không resample validation/test. Dataset chỉ hai ngày năm2013, không có customerID hoặc raw-to-PCA transform; chưa chứng minh dùng được với giao dịch thật hiện tại.
+
+Mở Docker Desktop, chỉ bật dịch vụ MLflow:
+
+```powershell
+docker compose -f docker/compose.yaml up -d mlflow
+Invoke-RestMethod http://127.0.0.1:5000/health
+```
+
+**Quan sát:** health thành công, mở [MLflow UI](http://localhost:5000). Lệnh này không build API hoặc triển khai hạ tầng ngoài máy. Compose tại [docker/compose.yaml](docker/compose.yaml) lưu DB/artifacts trong named volume `mlflow-data`.
+
+Có hai backend khác nhau:
+
+| Backend | URI | Ý nghĩa |
+|---|---|---|
+| Server Docker/UI5000 | `http://127.0.0.1:5000` | Backend CLI train mặc định; dùng để xem các run mới |
+| SQLite host cũ | `sqlite:///D:/MLops_Fraud_Detection/artifacts/mlflow.db` | Lưu lịch sử ban đầu; không tự xuất hiện trong UI Docker |
+
+V1/v2 đã được copy sang server bằng [sync_mlflow.py](workflow/sync_mlflow.py), không train lại. Không chạy sync mỗi lần train HTTP. Nếu UI trống, kiểm tra backend/volume/experiment trước, không train lại để chữa lỗi hiển thị. Không dùng `docker compose down -v`: tùy chọn đó xóa volume dữ liệu.
+
+## 4. Train một run mới — chỉ khi thực sự cần
+
+Đọc [training.json](configs/training.json) và [train.py](src/fraud_detection/train.py) trước khi đổi cấu hình. Để kiểm tra model hiện có, bỏ qua mục này và sang mục5.
+
+```powershell
+python -m fraud_detection.train --config configs/training.json --output artifacts/manual-training --tracking-uri http://127.0.0.1:5000
+```
+
+**Lệnh làm gì:** đọc raw data, làm sạch/chia tập, train candidate, chọn threshold trên validation, đánh giá test, log params/metrics/schema/dependency/source/fingerprint, kiểm tra serialize/load và đăng ký Registry nếu đạt gate. Thư mục output riêng giúp không thay manifest mặc định đang dùng. **Registry vẫn tạo version tiếp theo nếu đạt gate**, dù cấu hình giống v2.
+
+**Vì sao cần validation:** threshold quyết định đánh đổi FP/FN; chọn nó theo test sẽ làm kết quả cuối lạc quan. Cấu hình hiện chọn threshold tối ưu F1 với validation recall>=80%, precision>60%, ít nhất20 cảnh báo. Không sửa ngưỡng sau khi xem test.
+
+**Gate train mặc định:** accuracy>60%, precision>60%, vượt baseline về F1/AP. Gate này kiểm tra mức tối thiểu, **không có nghĩa tốt hơn v2**. Khi không đạt, script báo lỗi, lưu report nhưng không đăng ký; đọc report trước khi kết luận pipeline hỏng.
+
+**Đầu ra:** `artifacts/manual-training/training/<run_id>/report.json`, cấu hình, dependency, model và manifests; manifest tổng tại `artifacts/manual-training/manifest.json` và `manifest.registry.json` nếu thành công. Dùng runID console/UI, không đoán version mới.
+
+## 5. Xem run và đánh giá thủ công
+
+Trong [MLflow UI](http://localhost:5000):
+
+1. Chọn experiment `fraud-ulb-chronological`; mở run v2 trên server `02cd901aab2c499bb0c67612aeec54c4`. Run SQLite gốc là `e69e67d42b464b51b351b91f9399e409`; tag `origin_run_id` giúp truy vết việc copy.
+2. Xem Params: dữ liệu/fingerprint, seed, thuật toán, threshold. Xem Artifacts: cấu hình, dependency, report, signature/model. Run được copy có thể có bố cục artifact khác run train trực tiếp.
+3. Xem Metrics có tiền tố validation/test/baseline; so sánh cùng dataset và protocol. Với thử nghiệm bổ sung, mở experiment `fraud-ulb-improvements`, parent run chứa test/report; child run chứa validation từng trial.
+4. Chọn run và Compare để xem chênh lệch; chỉ so sánh test của candidate đã khóa, không thử test mọi model rồi chọn model đẹp nhất.
+5. Vào Registered Models → FraudDetection → version2, kiểm tra source run, trạng tháiREADY và schema. Một training run không đạt gate vẫn có thể tồn tại mà không có Registry version.
+
+Đọc report v2 trực tiếp, không cần train:
+
+```powershell
+$reportPath = 'artifacts/training/e69e67d42b464b51b351b91f9399e409/report.json'
+Get-Content $reportPath -Raw -Encoding UTF8 | ConvertFrom-Json | Format-List
+Get-Content artifacts/manifest.registry.json -Raw -Encoding UTF8
+```
+
+Với run mới, thay reportPath bằng đường dẫn console đã in. Đối chiếu:
+
+| Chỉ số | V2 test | Ý nghĩa đánh giá |
+|---|---:|---|
+| Accuracy | 99,9516% | Baseline luôn hợp lệ cũng99,8742%; không kết luận bằng accuracy |
+| Precision | 84,7826% | 39 đúng trên46 cảnh báo |
+| Recall | 75% | Bắt39/52 fraud, bỏ sót13 |
+| F1 | 0,79592 | Cân bằng precision/recall tại threshold đã khóa |
+| AP (`pr_auc`) | 0,78188 | Average Precision; đánh giá xếp hạng lớp fraud |
+| ROC-AUC | 0,91844 | Chỉ số phụ, không thay F1/AP/FP/FN |
+| Confusion matrix | `[[41291,7],[13,39]]` | Thứ tự `[[TN,FP],[FN,TP]]`;7 cảnh báo sai |
+
+**Giới hạn:** test đã được xem nhiều đợt, không còn là holdout mới độc lập. Chỉ52 fraud nên một trường hợp làm recall đổi khoảng1,92 điểm phần trăm. Không tuyên bố sẵn sàng production từ các con số này.
+
+## 6. Thử cải thiện và quyết định có đóng Docker hay không
+
+Không chạy lại chỉ để xem lịch sử. Khi muốn thực hiện một đợt mới:
+
+```powershell
+python -m workflow.improve_model --config configs/improvement-round2.json
+```
+
+Script [improve_model.py](workflow/improve_model.py) dùng cấu hình trial riêng, đối chiếu fingerprint với Registry v2, train trên train, chọn một winner theo F1 validation/AP, chỉ đánh giá winner trên test. **Chạy lại lệnh vẫn tạo run mới**, không chỉ mở report cũ.
+
+Gate cải thiện: F1 test phải tăng so với v2, recall>=75%, precision>60%, accuracy>60%. Nếu đạt, script đăng ký version và xuất manifest riêng dưới `artifacts/improvements/<parent_run_id>/`; không tự thay manifest mặc định hoặc gán production alias. Nếu không đạt: giữ v2, dừng trước bước đóng Docker cho candidate. Script **chưa tự gọi Docker**.
+
+| Kết quả đợt đã chạy | V2 | Winner đợt4 trial | Winner đợt3 trial |
+|---|---:|---:|---:|
+| Precision test | 84,78% | 84,78% | 78% |
+| Recall test | 75% | 75% | 75% |
+| F1 test | 0,79592 | 0,79592 | 0,76471 |
+| AP test | 0,78188 | 0,77550 | 0,77523 |
+| Đăng ký version mới | Đã có v2 | Không | Không |
+
+Parent run tương ứng `812c66df14944e20b88b74cab91fdccb` và `0b7f43023b444091b50dcf3292ae2c92`. Nhật ký chi tiết local tại [training-log.md](docs/training-log.md); docs và artifacts bị Git ignore, nên link có thể không tồn tại ở clone mới.
+
+## 7. Chọn model cụ thể và chạy API trên host
+
+Dùng local manifest hiện có để kiểm tra offline với artifact đã xuất:
+
+```powershell
+Get-Content artifacts/manifest.json -Raw
+$env:MODEL_MANIFEST = 'D:/MLops_Fraud_Detection/artifacts/manifest.json'
+python -m uvicorn fraud_detection.api:app --host 127.0.0.1 --port 18001 --no-access-log
+```
+
+Hoặc kiểm tra tải đúng model từ Registry: dừng API bằng Ctrl+C rồi chạy lại với:
+
+```powershell
+$env:MLFLOW_TRACKING_URI = 'http://127.0.0.1:5000'
+$env:MODEL_MANIFEST = 'D:/MLops_Fraud_Detection/artifacts/manifest.registry.json'
+python -m uvicorn fraud_detection.api:app --host 127.0.0.1 --port 18001 --no-access-log
+```
+
+**Tại sao hai cách:** local kiểm tra artifact có thể load trực tiếp; Registry kiểm tra thêm kết nối backend/artifact store và version cụ thể. Manifest phải ghép đúng URI/version/threshold/features; không đổi riêng nhãn version. Model load một lần khi startup, thay manifest phải restart. Ứng dụng không tự đọc `.env`.
+
+Giữ terminal server mở. Trong **PowerShell thứ hai**, kiểm tra:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:18001/health/live
+Invoke-RestMethod http://127.0.0.1:18001/health/ready
+$row = @{}
+1..28 | ForEach-Object { $row["V$_"] = 0.0 }
+$row['Amount'] = 0.0
+$body = @{ instances = @($row) } | ConvertTo-Json -Depth 4
+$result = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:18001/predict -ContentType 'application/json' -Body $body
+$result | ConvertTo-Json -Depth 5
+(Invoke-WebRequest http://127.0.0.1:18001/metrics -UseBasicParsing).Content
+```
+
+**Quan sát:** live/ready200; `model_version` phải là version đã chọn (hiện2), threshold đúng manifest; một prediction có `fraud_probability` trong[0,1], `is_fraud` bằng `score>=threshold`. `/metrics` có `fraud_model_ready 1`, số request và latency. Mở Swagger tại `http://127.0.0.1:18001/docs` nếu muốn gửi tay.
+
+Payload trên là29 số tổng hợp để kiểm tra hợp đồng, không dùng giao dịch thật và **không đo precision/recall**. API nhận1–256 dòng/batch; thiếu/thừa feature, chuỗi/bool, NaN/Infinity hoặc batch rỗng phải bị từ chối.
+
+Thử schema sai (PowerShell sẽ hiện lỗi HTTP422, đây là kết quả mong đợi):
+
+```powershell
+Invoke-WebRequest -Method Post -Uri http://127.0.0.1:18001/predict -ContentType 'application/json' -Body '{"instances":[{"Amount":0}]}' -UseBasicParsing
+```
+
+Để thử trạng thái chưa có model: Ctrl+C, `Remove-Item Env:MODEL_MANIFEST -ErrorAction SilentlyContinue`, khởi động lại server. Live vẫn200, ready503; predict với payload hợp lệ trả503. Cần phân biệt process còn sống với model đã sẵn sàng phục vụ.
+
+## 8. Build Docker và kiểm tra local — bước thủ công tùy chọn
+
+Chỉ làm mục này khi chủ động muốn kiểm chứng một model đã chọn. Hai đợt cải tiến gần nhất không đạt nên không cần build candidate. Không dùng lệnh Compose khởi động toàn bộ API với manifest Windows: đường dẫn `D:/...` không có nghĩa trong container Linux.
+
+Ví dụ dưới đây kiểm tra **v2 đã có**, mount Registry manifest readonly; model không được COPY vào image. Nếu chọn version khác, tạo manifest riêng từ artifact của version đó và sửa tag/đường dẫn tương ứng.
+
+```powershell
+docker build -f docker/Dockerfile -t fraud-api:manual-v2 .
+docker run --detach --name fraud-api-manual-v2 --publish 127.0.0.1:18002:8000 --env MODEL_MANIFEST=/models/manifest.registry.json --env MLFLOW_TRACKING_URI=http://host.docker.internal:5000 --mount "type=bind,source=D:/MLops_Fraud_Detection/artifacts/manifest.registry.json,target=/models/manifest.registry.json,readonly" fraud-api:manual-v2
+python workflow/smoke_container.py --url http://127.0.0.1:18002 --manifest artifacts/manifest.registry.json
+docker logs fraud-api-manual-v2
+```
+
+**Tại sao:** build kiểm tra dependency/API chạy trên Linux; mount manifest tránh nhúng đường dẫn host và tách model khỏi image. `host.docker.internal` là địa chỉ host từ Docker Desktop, còn localhost trong container là chính container. MLflow local phải đang chạy và truy cập được từ container. Nếu tên container đã tồn tại, kiểm tra container cũ trước hoặc chọn tên khác, không xóa nhầm service đang dùng.
+
+**Quan sát:** smoke kiểm tra live/ready200, predict200 đúng version, score hợp lệ và metrics200. Smoke không đo chất lượng fraud detection. Nếu kết nối MLflow qua Docker Desktop bị từ chối do binding/network, xem health/logs và xác minh đường kết nối; không sửa allowed-hosts thành wildcard hoặc public server chỉ để vượt test. Một lựa chọn khác là local model mount dưới `/models` cùng manifest có URI Linux tương ứng; không sửa manifest gốc đang dùng.
+
+Nếu đã có Trivy CLI local:
+
+```powershell
+trivy image --severity HIGH,CRITICAL --scanners vuln --exit-code 1 fraud-api:manual-v2
+```
+
+**Quan sát:** exit0 là không có phát hiện HIGH/CRITICAL theo database scan lúc chạy; exit1 cần xem chi tiết và cập nhật dependency/OS phù hợp, không mặc định bỏ qua. Chưa có Trivy local có thể kiểm tra bước scan CI; không ghi nhận local scan đạt nếu chưa chạy.
+
+Dọn đúng container thử nghiệm sau khi xem kết quả:
+
+```powershell
+docker stop fraud-api-manual-v2
+docker rm fraud-api-manual-v2
+```
+
+Giữ image nếu cần lặp lại. Không chạy prune toàn bộ hoặc xóa volume MLflow. Rollback local bằng chọn lại manifest/version cũ phù hợp schema rồi restart API/container, không ghi đè Registry version cũ. Image và manifest cần được ghi cùng run/version/threshold trong biên bản kiểm tra.
+
+## 9. CI/CD hiện làm gì và kiểm tra tay ở đâu
+
+Đọc [ci.yaml](.github/workflows/ci.yaml) để đối chiếu checkout hiện tại:
+
+1. PR, push main hoặc Run workflow kích hoạt lint/tests/coverage. Push/manual chạy SonarQube Cloud và đợi Quality Gate; PR hiện bỏ qua Sonar. Cần secret `SONAR_TOKEN`; `SONAR_HOST_URL` mặc định `https://sonarcloud.io`. Không có công tắc `SONAR_ENABLED` trong workflow hiện tại.
+2. Sonar dùng [sonar-project.properties](sonar-project.properties): projectKey `PhongHuynh1706_NT113_Fraud_Detection_MLops`, organization `phonghuynh1706`, coverage từ `coverage.xml`. Kiểm tra log upload rồi Quality Gate và trang Issues/Coverage; upload thành công chưa có nghĩa gate đạt.
+3. CI render Kustomize và validate Terraform; đây chưa phải apply. Khi job test đạt, job image build một image, smoke không có model (ready503 là mong đợi), scan Trivy HIGH/CRITICAL.
+4. Chỉ sự kiện push publish image đã scan lên GHCR theo commitSHA; PR/manual không publish. Xem digest trong log publish để truy vết image chính xác.
+5. Job deploy-test chỉ chạy khi push và repository variable `ENABLE_TEST_DEPLOY=true`. **Trong giai đoạn chỉ local, giữ variable này không bật; không chạy [deploy.yaml](.github/workflows/deploy.yaml).** Workflow deploy có thao tác apply thật khi được chạy với đủ cấu hình.
+
+CI không train raw dataset local và không kiểm tra candidate có tốt hơn v2. Vì vậy CI xanh không tự đồng nghĩa một model mới đã được đánh giá/đóng gói/triển khai. Không push chỉ để xem model; push main có thể publish image và có thể deploy nếu repository đã bật biến nêu trên.
+
+## 10. Metrics và load test local tùy chọn
+
+Mở `/metrics` của API đã ready. Code hiện xuất request/status, histogram latency, phân bố score, decision counts và readiness. Các metric này trả lời service có chạy/nhanh/lỗi không; precision/recall cần nhãn thật đủ độ trễ, hiện chưa có pipeline online đó.
+
+Để load test local khi máy đủ tài nguyên, tạo payload tổng hợp UTF8 không BOM rồi bắt đầu mức thấp:
 
 ```powershell
 $row = @{}
 1..28 | ForEach-Object { $row["V$_"] = 0.0 }
 $row['Amount'] = 0.0
-$body = @{ instances = @($row) } | ConvertTo-Json -Depth 4
-Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:8000/predict' -ContentType 'application/json' -Body $body
+$payloadJson = @{ instances = @($row) } | ConvertTo-Json -Depth 4
+[System.IO.File]::WriteAllText('D:/MLops_Fraud_Detection/artifacts/synthetic-payload.json', $payloadJson, [System.Text.UTF8Encoding]::new($false))
+$env:LOCUST_PAYLOAD_FILE = 'D:/MLops_Fraud_Detection/artifacts/synthetic-payload.json'
+New-Item -ItemType Directory -Force artifacts/load-reports | Out-Null
+locust -f load_testing/locustfile.py --host http://127.0.0.1:18001 --headless --users 2 --spawn-rate 1 --run-time 30s --csv artifacts/load-reports/local --html artifacts/load-reports/local.html
 ```
 
-Phần ví dụ schema tổng quát bên dưới dùng để giải thích hợp đồng; khi chạy thật,
-dùng đầy đủ 29 cột và version/threshold từ manifest được train, không dùng `synthetic_a/b`.
+**Quan sát:** throughput, failure rate, p50/p95/p99 trong console/CSV/HTML. Ghi model/image version, số user, thời lượng và cấu hình máy cùng kết quả. Mức tải trên chỉ minh họa, không phải benchmark đã đo. Local một process/container không chứng minh HPA scale được; không chạy vào production hoặc endpoint ngoài phạm vi được phép.
 
-Mã nguồn khai báo Python 3.11–3.13; CI kiểm tra Python 3.11. Phạm vi này là cấu hình
-dự án, không phải xác nhận đã kiểm thử mọi phiên bản. Dùng môi trường Conda được
-thống nhất cho dự án: `fraud-mlops`, đã xác minh Python 3.11.18 trên máy phát triển.
+## 11. Hạ tầng giai đoạn sau — chỉ xem cấu hình
 
-```powershell
-conda activate fraud-mlops
-pip install -e '.[dev,load]'
-ruff check .
-pytest --cov=fraud_detection --cov-report=term-missing
-uvicorn fraud_detection.api:app --host 127.0.0.1 --port 8000 --no-access-log
-```
+- [K8s/](K8s/) có Deployment/Service/Ingress và HPA CPU/memory; [Terraform](terraform/) hiện quản lý namespace trên cluster có sẵn, không tạo cloud/cluster. Test/production có cấu hình/state riêng.
+- [Monitoring](K8s/monitoring/) có ServiceMonitor, alerts/dashboard; cần Prometheus Operator, Grafana và cấu hình phù hợp cluster trước khi dùng. Metrics Server cấp metric HPA; không dùng KEDA đồng thời để điều khiển cùng workload.
+- Renderer [render.py](workflow/render.py) yêu cầu GHCR image digest, manifest Registry version số khớp nhau, địa chỉ MLflow từ Pod, Ingress host/class, TLS secret cho production và imagePullSecret khi cần. Base còn placeholder, không apply trực tiếp.
+- Cần chọn cluster, registry access, backend/artifact store, backup/secrets, tài nguyên và mục tiêu latency trước triển khai. Khi có cluster test được cho phép mới đo replica, CPU/memory và scale out/in bằng Locust; con số autoscaling trong YAML chỉ là cấu hình ban đầu.
+- Rollback sau này cần ghép image digest, model version, threshold và runtime config; giữ revision/ConfigMap cũ. Chưa kiểm chứng rollback cluster trong hướng dẫn local này.
 
-Đây là hướng dẫn chạy, không phải biên bản các lệnh đã kiểm chứng trên máy bạn.
-Kiểm tra `/health/live`, `/health/ready`, `/docs` và `/metrics` trên cổng 8000.
-Khi chưa có model: live trả 200; ready và predict trả 503.
-Ứng dụng không tự đọc `.env`; xuất biến môi trường bằng shell.
+## 12. Biên bản đánh giá mỗi lần chạy
 
-## Hợp đồng model và inference
+Ghi lại runID/experiment/backend, datasetSHA, commit và trạng thái working tree, cấu hình/seed/dependency; validation threshold và quy tắc chọn; test metrics/confusion matrix; Registry version hoặc lý do không đăng ký; image tag/digest nếu build; health/predict/schema/metrics/scan; phần chưa kiểm chứng và quyết định giữ/đổi model. Không ghi payload giao dịch/PII/secrets vào biên bản.
 
-Model MLflow phải chứa preprocessing cùng logic dự đoán, nhận pandas DataFrame
-và trả DataFrame có cột `fraud_probability`: xác suất gian lận trong [0, 1],
-một dòng đầu ra ứng với một dòng đầu vào. Không dùng nhãn dự đoán thay cho xác suất.
-Nếu model sklearn hiện chỉ trả nhãn qua `predict`, cần adapter `mlflow.pyfunc.PythonModel`
-gọi xác suất đúng lớp gian lận; triển khai adapter sau khi đọc mã train thực tế.
-API hiện hỗ trợ đặc trưng số hữu hạn, không ép chuỗi/bool thành số và không nhận missing values.
-Nếu dữ liệu thực tế cần categorical hoặc missing values, mở rộng hợp đồng và tests trước khi tích hợp.
-
-Sau khi có model, tạo `artifacts/manifest.json` theo mẫu dưới đây. Các tên đặc trưng,
-version và threshold chỉ minh họa cấu trúc, không mô tả dữ liệu đã có:
-
-```json
-{
-  "model_uri": "models:/FraudDetection/1",
-  "model_version": "1",
-  "features": ["synthetic_a", "synthetic_b"],
-  "threshold": 0.7,
-  "probability_column": "fraud_probability"
-}
-```
-
-```powershell
-$env:MLFLOW_TRACKING_URI = 'http://127.0.0.1:5000'
-$env:MODEL_MANIFEST = 'artifacts/manifest.json'
-uvicorn fraud_detection.api:app --host 127.0.0.1 --port 8000 --no-access-log
-```
-
-POST `/predict` nhận `{"instances":[{"synthetic_a":1.0,"synthetic_b":2.0}]}`.
-Tên cột phải khớp manifest, thứ tự trong JSON không quan trọng. Mỗi batch tối đa
-256 dòng; phản hồi chứa version, threshold, score và quyết định `score >= threshold`.
-Chỉ load artifact tin cậy. Cài thêm dependency của model thật khi tích hợp;
-MLflow load model không tự cài toàn bộ môi trường huấn luyện vào API.
-Model được load một lần khi khởi động; sau khi sửa manifest, khởi động lại API.
-
-Pipeline train ghi MLflow params, dataset fingerprint, seed, commit, dependency,
-threshold chọn trên validation, signature và metrics. Báo cáo accuracy, AP, precision,
-recall, F1, ROC-AUC và confusion matrix nằm cùng artifact của từng run. Holdout ULB đã
-được xem trong thử nghiệm trước; lần train lại không phải kiểm chứng độc lập trên dữ liệu mới.
-
-## Docker và MLflow cho phát triển
-
-```powershell
-docker compose -f docker/compose.yaml up --build -d
-docker compose -f docker/compose.yaml logs api
-docker compose -f docker/compose.yaml down
-```
-
-MLflow ở `http://127.0.0.1:5000`, API ở `http://127.0.0.1:8000`.
-Volume giữ SQLite backend và artifact qua lần restart; `down` không xóa volume.
-MLflow chỉ bind cổng host vào loopback và cấu hình host allowlist.
-Compose là cấu hình phát triển một máy, chưa có backup, HA hoặc xác thực production.
-Trong container, model local cần nằm dưới `/models`; đường dẫn Windows không dùng được ở đó.
-Với registry URI, API cần kết nối tới MLflow và kho artifact tương ứng.
-
-## Kubernetes và Terraform
-
-Terraform hiện chỉ tạo namespace trên cluster có sẵn, không tạo cloud hoặc cluster.
-Test và production có thư mục và local state riêng. Trước khi dùng cộng tác,
-cấu hình remote backend có locking và phân quyền, không commit state hoặc kubeconfig.
-
-```powershell
-terraform -chdir=terraform/environments/test init
-terraform -chdir=terraform/environments/test plan -var-file=terraform.tfvars -out=test.tfplan
-# Chỉ apply sau khi đã xem plan và cho phép thay đổi cluster:
-terraform -chdir=terraform/environments/test apply test.tfplan
-kubectl kustomize K8s/overlays/test
-```
-
-Tạo file biến cục bộ từ `terraform.tfvars.example` và chọn đúng context trước khi plan.
-Production làm tương tự ở thư mục riêng. Chưa thực thi apply trong bước khởi tạo.
-
-Điều kiện triển khai: cluster/namespace đã có, Metrics Server, Ingress Controller,
-MLflow backend/artifact store kết nối được, model đã đăng ký và image đã được scan.
-Quyền GitHub runner chỉ cần cho namespace triển khai. Registry private cần Secret
-pull image tạo trước trong namespace. Credentials MLflow tùy chọn qua Secret
-`fraud-mlflow-credentials` với các biến môi trường MLflow phù hợp.
-
-Base manifest còn image và domain placeholder, không apply trực tiếp.
-Renderer `workflow/render.py` yêu cầu các biến:
-
-| Biến | Ý nghĩa |
-| --- | --- |
-| `DEPLOY_IMAGE` | Image GHCR gồm digest `@sha256:...` |
-| `MODEL_MANIFEST_JSON` | JSON manifest thật, registry URI chứa version số khớp `model_version` |
-| `MLFLOW_TRACKING_URI` | Địa chỉ MLflow truy cập được từ Pod |
-| `INGRESS_HOST` | Domain thật |
-| `INGRESS_CLASS` | IngressClass của cluster |
-| `INGRESS_TLS_SECRET` | Secret TLS đã có, bắt buộc với production |
-| `IMAGE_PULL_SECRET` | Secret registry đã có nếu image private |
-
-Renderer tạo ConfigMap manifest bất biến theo hash, thay image và cấu hình runtime.
-Thay model/config tạo Pod template mới. Giữ ConfigMap cũ để phục vụ rollback;
-không xóa chúng khi còn revision tham chiếu. Rollback Deployment bằng
-`kubectl -n fraud-test rollout undo deployment/fraud-api`, rồi kiểm tra rollout.
-GitHub Actions là nguồn cấu hình chuẩn: một lần deploy mới sẽ áp lại cấu hình đã chọn.
-
-HPA bản đầu dùng CPU và memory, không dùng KEDA đồng thời. Giới hạn 1–5 Pod cho
-test, 2–10 cho production; requests/limits và tỷ lệ utilization là giá trị khởi đầu,
-chưa được hiệu chỉnh bằng load test. Memory model thường không giảm theo tải;
-theo dõi để tránh HPA tăng replica liên tục do dung lượng model nền.
-Chỉ `/predict` được expose qua Ingress; API chưa có xác thực người dùng hoặc rate limit.
-Trước khi public production, cấu hình auth/rate limit tại gateway theo yêu cầu thực tế.
-
-## Giám sát
-
-Cài Helm chart `prometheus-community/kube-prometheus-stack` với release `monitoring`
-trong namespace `monitoring`, dùng `K8s/monitoring/values.yaml`. Chọn và pin phiên bản
-chart tương thích cluster trước khi cài. Tạo Secret `grafana-admin` trước, chứa
-`admin-user` và `admin-password`. Sau khi CRD của Operator đã có:
-
-```powershell
-kubectl apply -f K8s/monitoring/servicemonitor.yaml
-kubectl apply -f K8s/monitoring/alerts.yaml
-kubectl apply -f K8s/monitoring/dashboard.yaml
-```
-
-Dashboard bao gồm RPS, p95 latency, tỷ lệ lỗi, tỷ lệ cảnh báo, replica, CPU và memory.
-ServiceMonitor scrape qua Service; xác minh label selector của Prometheus nếu đổi
-tên release. Chưa có metrics precision/recall hay drift thực vì chưa có pipeline
-nhãn và dữ liệu tham chiếu. Score/decision là tín hiệu vận hành, không thay thế chất lượng model.
-
-## GitHub Actions, SonarQube và Trivy
-
-CI chạy lint/tests/coverage, render Kubernetes và validate Terraform. Build một image,
-scan HIGH/CRITICAL bằng Trivy, rồi push chính image đã scan lên GHCR khi push vào `main`.
-PR chỉ build/scan, không push/deploy. Scan lỗi sẽ chặn publish.
-Dependency hiện khai báo khoảng phiên bản; cần khóa dependency sau khi tích hợp mã train
-và chốt môi trường để tái lập image/model đầy đủ.
-
-Repository variable `SONAR_ENABLED=true` bật SonarQube quality gate cho push `main`;
-cần `SONAR_HOST_URL` và secret `SONAR_TOKEN`. Khi chưa có server, bước này được bỏ qua
-rõ ràng qua điều kiện workflow. Tạo project Sonar có key khớp cấu hình.
-
-Tạo GitHub Environments `test` và `production`; đặt required reviewers cho production.
-Mỗi environment cấu hình secret `KUBECONFIG`, `MODEL_MANIFEST_JSON` cùng variables
-MLflow/Ingress/pull secret theo bảng trên. Kubeconfig là nội dung YAML, không phải base64.
-Bật repository variable `ENABLE_TEST_DEPLOY=true` sau khi test infrastructure và model đã sẵn sàng
-để tự deploy test sau CI. Production chạy bằng workflow dispatch với digest đã scan;
-cấu hình bảo vệ environment là trách nhiệm của repository admin.
-Workflow đợi readiness, thất bại nếu rollout không thành công; không tự rollback
-để tránh che khuất lỗi triển khai. Chưa chạy workflow trên GitHub.
-
-## Load testing
-
-Tạo JSON payload tổng hợp khớp model thật rồi chạy vào môi trường test được cho phép:
-
-```powershell
-$env:LOCUST_PAYLOAD_FILE = 'artifacts/synthetic-payload.json'
-New-Item -ItemType Directory -Force reports
-locust -f load_testing/locustfile.py --host http://127.0.0.1:8000 --headless --users 20 --spawn-rate 2 --run-time 2m --csv reports/load --html reports/load.html
-```
-
-Đây là mức tải minh họa, chưa phải benchmark đã chạy. Thu thập throughput, tỷ lệ lỗi,
-p50/p95/p99 cùng replica và tài nguyên từ Grafana. Chạy tăng tải theo từng mức và
-quan sát scale in sau tải ít nhất bằng cửa sổ stabilization 300 giây. Lưu cấu hình,
-thời điểm, image/model version và giới hạn tài nguyên cùng báo cáo.
-
-## Kiểm chứng bước khởi tạo
-
-Đã chạy trong Conda `fraud-mlops`, Python 3.11.18, MLflow 3.17.2:
-
-- 28 tests vượt qua; coverage phần `fraud_detection` đạt 98%, gồm MLflow save/load
-  bằng model tổng hợp và API TestClient. Đây không phải accuracy của model fraud.
-- Ruff lint và kiểm tra định dạng vượt qua; editor không báo lỗi trong mã nguồn,
-  tests hoặc renderer.
-- Terraform test và production đều `init -backend=false` và `validate` thành công;
-  kiểm tra định dạng cũng vượt qua. Chưa plan/apply lên cluster.
-- Parse thành công 14 file YAML cùng JSON dashboard; render thực bằng kubectl cho
-  cả test/production thành công, gồm image digest, manifest theo hash và TLS production.
-- `docker compose config --quiet` thành công. Docker daemon chưa chạy nên chưa
-  build image, chạy Compose hoặc quét image cục bộ.
-- Dataset cục bộ được `git check-ignore` xác nhận loại khỏi Git. Đã khởi tạo Git;
-  chưa commit, tạo GitHub repository hoặc push.
-
-Tests còn cảnh báo từ thư viện về TestClient/httpx và type hints của model tổng hợp;
-không có test thất bại. Chưa chạy CI trên GitHub, deploy Kubernetes, load test hay
-đánh giá model thật. Cấu hình hạ tầng cần được kiểm chứng trên cluster đã chọn.
-
-## Thứ tự tiếp theo
-
-1. Thêm file train; xác minh schema dữ liệu và cách chia tập trước khi tích hợp MLflow.
-2. Chốt threshold, dependency và tiêu chí chấp nhận model bằng kết quả thật.
-3. Chọn cluster, registry, MLflow backend/artifact store, domain và secrets.
-4. Build/scan image, deploy test, kiểm tra metrics và load test để hiệu chỉnh HPA.
-5. Xem xét bảo mật, rollback và kết quả kiểm chứng trước khi triển khai production.
-
-Tài liệu tham chiếu: [MLflow pyfunc](https://mlflow.org/docs/latest/api_reference/python_api/mlflow.pyfunc.html),
-[FastAPI lifespan](https://fastapi.tiangolo.com/advanced/events/),
-[Kubernetes HPA](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale-walkthrough/),
-[Prometheus Operator](https://github.com/prometheus-operator/prometheus-operator/blob/main/Documentation/developer/getting-started.md),
-[GitHub image publishing](https://docs.github.com/en/actions/tutorials/publish-packages/publish-docker-images).
+[Nhật ký local](docs/training-log.md) là ví dụ đã tổng hợp các lần train. Raw [dataset/](dataset/), [artifacts/](artifacts/), [docs/](docs/) và AGENTS.md đang được Git ignore theo yêu cầu; clone mới cần dataset/artifact được cung cấp riêng. README này được quản lý trong Git, không phụ thuộc việc phải train lại mới hiểu quy trình.

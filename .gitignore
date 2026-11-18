@@ -36,3 +36,5 @@ kubeconfig*
 .deploy/
 /AGENTS.md
 .md
+
+docs/

@@ -22,7 +22,7 @@ jobs:
           cache: pip
       - run: pip install -e '.[dev]'
       - run: ruff check .
-      - run: pytest --cov=fraud_detection --cov-report=xml --cov-report=term-missing
+      - run: pytest --cov=fraud_detection --cov-report=xml --cov-report=term-missing --cov-fail-under=80
       - name: Check SonarQube credentials
         if: github.event_name != 'pull_request'
         env:

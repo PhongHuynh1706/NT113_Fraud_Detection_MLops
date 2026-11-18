@@ -1,0 +1,14 @@
+output "vpc_id" { value = module.vpc.id }
+output "private_subnet_ids" { value = module.networking.private_subnet_ids }
+output "cluster_name" { value = module.eks.name }
+output "cluster_endpoint" { value = module.eks.endpoint }
+output "cluster_certificate_authority_data" { value = module.eks.certificate_authority_data }
+output "node_group_names" { value = module.nodes.node_group_names }
+output "ecr_repository_url" { value = module.ecr.repository_url }
+output "models_s3_uri" { value = module.s3.models_uri }
+output "dataset_s3_uri" { value = module.s3.dataset_uri }
+output "s3_bucket_names" { value = module.s3.bucket_names }
+output "node_ami_id" { value = module.nodes.ami_id }
+output "node_instance_type" { value = module.nodes.instance_type }
+output "node_os" { value = module.nodes.os }
+output "namespace" { value = var.manage_namespace ? module.namespace[0].name : null }

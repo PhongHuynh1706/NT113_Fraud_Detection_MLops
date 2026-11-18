@@ -21,6 +21,7 @@ from fraud_detection.model import ModelManifest, ModelRuntime
 from fraud_detection.probability_model import FraudProbabilityModel
 from fraud_detection.selection import improves_reference
 from fraud_detection.train import chronological_split, evaluate, select_threshold, write_json
+from workflow.build_model_image import build_model_image
 
 
 def main(search_path="configs/improvement.json"):
@@ -63,6 +64,9 @@ def main(search_path="configs/improvement.json"):
         ]
     }
     with mlflow.start_run(run_name="validation-comparison") as parent:
+        mlflow.log_params(
+            {"dataset_sha256": fingerprint, "reference_version": search["reference_version"]}
+        )
         root = Path("artifacts/improvements") / parent.info.run_id
         root.mkdir(parents=True)
         choices = []
@@ -201,7 +205,21 @@ def main(search_path="configs/improvement.json"):
                     model_version=str(version.version),
                     reload_verified=True,
                 )
+        # Persist registration before Docker: a failed build must remain traceable.
         write_json(root / "report.json", report)
+        try:
+            report["image"] = build_model_image(root, report)
+        except Exception as error:
+            report["image"] = {"status": "failed", "error_type": type(error).__name__}
+            write_json(root / "report.json", report)
+            mlflow.log_dict(report, "report.json")
+            if (root / "docker-build.log").exists():
+                mlflow.log_artifact(str(root / "docker-build.log"))
+            raise
+        write_json(root / "report.json", report)
+        if report["image"]["status"] == "built":
+            mlflow.log_dict(report["image"], "image.json")
+            mlflow.log_artifact(str(root / "docker-build.log"))
         mlflow.log_dict(config, "base_config.json")
         mlflow.log_dict(search, "search_config.json")
         mlflow.log_dict(versions, "dependencies.json")

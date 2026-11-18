@@ -1,2 +1,29 @@
-kubeconfig_path = "~/.kube/config"
-kube_context    = "REPLACE_WITH_PRODUCTION_CONTEXT"
+﻿# Examples only: replace account/region/AZs/admin/version and review costs before plan.
+aws_region = "ap-southeast-1"
+allowed_account_ids = ["123456789012"]
+name = "fraud-production"
+vpc_cidr = "10.30.0.0/16"
+subnets = {
+ a = { az = "ap-southeast-1a", public_cidr = "10.30.0.0/24", private_cidr = "10.30.10.0/24" }
+ b = { az = "ap-southeast-1b", public_cidr = "10.30.1.0/24", private_cidr = "10.30.11.0/24" }
+}
+single_nat_gateway = false
+cluster_version = "REPLACE_WITH_SUPPORTED_VERSION"
+admin_principal_arn = "arn:aws:iam::123456789012:role/REPLACE_WITH_ADMIN_ROLE"
+public_access_cidrs = []
+node_groups = {
+ general = {
+   capacity_type = "ON_DEMAND"
+   min_size = 2
+   desired_size = 2
+   max_size = 5
+   disk_size = 30
+ }
+}
+tags = { Owner = "REPLACE_WITH_OWNER" }
+
+# Fixed node OS Ubuntu24.04 EKS amd64; fixed EC2 type t3.large.
+# Pin a supported dated serial for production instead of current.
+ubuntu_ami_serial = "current"
+# First provision infrastructure, then enable namespace in a second reviewed plan.
+manage_namespace = false

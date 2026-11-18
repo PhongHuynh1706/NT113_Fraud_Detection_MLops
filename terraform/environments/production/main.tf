@@ -1,32 +1,69 @@
-terraform {
-  required_version = ">= 1.6, < 2.0"
-  required_providers {
-    kubernetes = {
-      source  = "hashicorp/kubernetes"
-      version = "~> 2.38"
-    }
-  }
+module "vpc" {
+  source = "../../modules/vpc"
+  name   = var.name
+  cidr   = var.vpc_cidr
+  tags   = var.tags
+}
+module "networking" {
+  source             = "../../modules/networking"
+  name               = var.name
+  vpc_id             = module.vpc.id
+  subnets            = var.subnets
+  single_nat_gateway = var.single_nat_gateway
+  tags               = var.tags
+}
+module "security_groups" {
+  source   = "../../modules/security_groups"
+  name     = var.name
+  vpc_id   = module.vpc.id
+  vpc_cidr = module.vpc.cidr
+  tags     = var.tags
+}
+module "iam" {
+  source = "../../modules/iam"
+  name   = var.name
+  tags   = var.tags
+}
+module "eks" {
+  source              = "../../modules/eks"
+  name                = var.name
+  cluster_version     = var.cluster_version
+  role_arn            = module.iam.cluster_role_arn
+  subnet_ids          = module.networking.private_subnet_ids
+  security_group_id   = module.security_groups.control_plane_id
+  admin_principal_arn = var.admin_principal_arn
+  public_access_cidrs = var.public_access_cidrs
+  tags                = var.tags
+  depends_on          = [module.iam]
+}
+module "nodes" {
+  source             = "../../modules/nodes"
+  cluster_name       = module.eks.name
+  cluster_version    = module.eks.version
+  node_role_arn      = module.iam.node_role_arn
+  subnet_ids         = module.networking.private_subnet_ids
+  security_group_ids = [module.eks.primary_security_group_id, module.security_groups.nodes_id]
+  node_groups        = var.node_groups
+  cluster_endpoint   = module.eks.endpoint
+  cluster_ca_data    = module.eks.certificate_authority_data
+  ubuntu_ami_serial  = var.ubuntu_ami_serial
+  tags               = var.tags
+  depends_on         = [module.iam, module.networking]
 }
 
-variable "kubeconfig_path" {
-  type        = string
-  description = "Path to production kubeconfig; never commit its contents."
+module "ecr" {
+  source = "../../modules/ecr"
+  name   = var.name
+  tags   = var.tags
 }
-
-variable "kube_context" {
-  type = string
+module "s3" {
+  source = "../../modules/s3"
+  name   = var.name
+  tags   = var.tags
 }
-
-provider "kubernetes" {
-  config_path    = pathexpand(var.kubeconfig_path)
-  config_context = var.kube_context
-}
-
 module "namespace" {
-  source = "../../modules/namespace"
-  name   = "fraud-production"
-}
-
-output "namespace" {
-  value = module.namespace.name
+  count      = var.manage_namespace ? 1 : 0
+  source     = "../../modules/namespace"
+  name       = "fraud-production"
+  depends_on = [module.nodes]
 }

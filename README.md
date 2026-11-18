@@ -1,4 +1,4 @@
-﻿# MLOps Fraud Detection
+# MLOps Fraud Detection
 
 Dự án phát hiện gian lận với scikit-learn, MLflow, FastAPI, Docker và GitHub Actions; có cấu hình Kubernetes HPA, Prometheus/Grafana, Terraform và Locust cho giai đoạn triển khai sau.
 
@@ -10,7 +10,7 @@ Hướng dẫn này mô tả **kiểm tra thủ công trên máy local**. Các l
 - Test ULB đã đo: precision **84,7826%**, recall **75%**, F1 **0,79592**, AP **0,78188**, accuracy **99,9516%**; confusion matrix `[[41291,7],[13,39]]`.
 - Đã thử thêm 4 cấu hình rồi 3 cấu hình: không vượt điều kiện cải thiện nên không đăng ký version mới hoặc build Docker mới cho các candidate đó.
 - V1/v2 đã có trong MLflow server local cổng5000. Model v2 đã kiểm tra HTTP API trên host; container từng được kiểm chứng với v1. **Chưa xác minh container v2 bằng các bước dưới đây.**
-- CI tự build/scan image API theo sự kiện GitHub; **chưa nối điều kiện model tốt hơn với build Docker**. Docker image hiện chứa API/dependency; model được mount hoặc tải từ Registry lúc khởi động.
+- CI tự build/scan image API theo sự kiện GitHub; **đã nối train cải thiện → đăng ký → build image local chứa model** trong script thử nghiệm. CI thông thường vẫn build image API riêng theo commit.
 - Chưa triển khai cluster/production trong phạm vi hiện tại. Không chạy deploy workflow, Terraform apply hay kubectl apply khi làm theo bài kiểm tra local này.
 
 Luồng cần hiểu:
@@ -161,7 +161,7 @@ python -m workflow.improve_model --config configs/improvement-round2.json
 
 Script [improve_model.py](workflow/improve_model.py) dùng cấu hình trial riêng, đối chiếu fingerprint với Registry v2, train trên train, chọn một winner theo F1 validation/AP, chỉ đánh giá winner trên test. **Chạy lại lệnh vẫn tạo run mới**, không chỉ mở report cũ.
 
-Gate cải thiện: F1 test phải tăng so với v2, recall>=75%, precision>60%, accuracy>60%. Nếu đạt, script đăng ký version và xuất manifest riêng dưới `artifacts/improvements/<parent_run_id>/`; không tự thay manifest mặc định hoặc gán production alias. Nếu không đạt: giữ v2, dừng trước bước đóng Docker cho candidate. Script **chưa tự gọi Docker**.
+Docker Desktop cần chạy nếu candidate vượt gate. Gate cải thiện: F1 test phải tăng so với v2, recall>=75%, precision>60%, accuracy>60%. Nếu đạt, script đăng ký version và xuất manifest riêng dưới `artifacts/improvements/<parent_run_id>/`; không tự thay manifest mặc định hoặc gán production alias. Nếu không đạt: giữ v2, dừng trước bước đóng Docker cho candidate. Script **tự build Docker sau khi đăng ký và kiểm chứng reload thành công**. Không vượt gate thì Docker không được gọi.
 
 | Kết quả đợt đã chạy | V2 | Winner đợt4 trial | Winner đợt3 trial |
 |---|---:|---:|---:|
@@ -259,7 +259,7 @@ Giữ image nếu cần lặp lại. Không chạy prune toàn bộ hoặc xóa 
 
 1. PR, push main hoặc Run workflow kích hoạt lint/tests/coverage. Push/manual chạy SonarQube Cloud và đợi Quality Gate; PR hiện bỏ qua Sonar. Cần secret `SONAR_TOKEN`; `SONAR_HOST_URL` mặc định `https://sonarcloud.io`. Không có công tắc `SONAR_ENABLED` trong workflow hiện tại.
 2. Sonar dùng [sonar-project.properties](sonar-project.properties): projectKey `PhongHuynh1706_NT113_Fraud_Detection_MLops`, organization `phonghuynh1706`, coverage từ `coverage.xml`. Kiểm tra log upload rồi Quality Gate và trang Issues/Coverage; upload thành công chưa có nghĩa gate đạt.
-3. CI render Kustomize và validate Terraform; đây chưa phải apply. Khi job test đạt, job image build một image, smoke không có model (ready503 là mong đợi), scan Trivy HIGH/CRITICAL.
+3. CI render Kustomize, validate hai Terraform roots test/production và chạy AWS mock tests; đây chưa phải apply. Khi job test đạt, job image build một image, smoke không có model (ready503 là mong đợi), scan Trivy HIGH/CRITICAL.
 4. Chỉ sự kiện push publish image đã scan lên GHCR theo commitSHA; PR/manual không publish. Xem digest trong log publish để truy vết image chính xác.
 5. Job deploy-test chỉ chạy khi push và repository variable `ENABLE_TEST_DEPLOY=true`. **Trong giai đoạn chỉ local, giữ variable này không bật; không chạy [deploy.yaml](.github/workflows/deploy.yaml).** Workflow deploy có thao tác apply thật khi được chạy với đủ cấu hình.
 
@@ -286,7 +286,7 @@ locust -f load_testing/locustfile.py --host http://127.0.0.1:18001 --headless --
 
 ## 11. Hạ tầng giai đoạn sau — chỉ xem cấu hình
 
-- [K8s/](K8s/) có Deployment/Service/Ingress và HPA CPU/memory; [Terraform](terraform/) hiện quản lý namespace trên cluster có sẵn, không tạo cloud/cluster. Test/production có cấu hình/state riêng.
+- [K8s/](K8s/) có Deployment/Service/Ingress và HPA CPU/memory. [Terraform AWS/EKS](terraform/README.md) đã tách module VPC, networking, security groups, IAM, EKS và managed nodes; main của test/production chỉ gọi module. Namespace fraud-test/fraud-production được gọi trong cùng root môi trường qua manage_namespace sau khi cluster sẵn sàng; thêm module ECR cho image, S3 cho models/dataset, nodes cố định Ubuntu24.04 EKS/t3.large. Chưa plan/apply AWS thật; xem cảnh báo state migration trong hướng dẫn trước khi dùng root AWS mới.
 - [Monitoring](K8s/monitoring/) có ServiceMonitor, alerts/dashboard; cần Prometheus Operator, Grafana và cấu hình phù hợp cluster trước khi dùng. Metrics Server cấp metric HPA; không dùng KEDA đồng thời để điều khiển cùng workload.
 - Renderer [render.py](workflow/render.py) yêu cầu GHCR image digest, manifest Registry version số khớp nhau, địa chỉ MLflow từ Pod, Ingress host/class, TLS secret cho production và imagePullSecret khi cần. Base còn placeholder, không apply trực tiếp.
 - Cần chọn cluster, registry access, backend/artifact store, backup/secrets, tài nguyên và mục tiêu latency trước triển khai. Khi có cluster test được cho phép mới đo replica, CPU/memory và scale out/in bằng Locust; con số autoscaling trong YAML chỉ là cấu hình ban đầu.
@@ -297,3 +297,31 @@ locust -f load_testing/locustfile.py --host http://127.0.0.1:18001 --headless --
 Ghi lại runID/experiment/backend, datasetSHA, commit và trạng thái working tree, cấu hình/seed/dependency; validation threshold và quy tắc chọn; test metrics/confusion matrix; Registry version hoặc lý do không đăng ký; image tag/digest nếu build; health/predict/schema/metrics/scan; phần chưa kiểm chứng và quyết định giữ/đổi model. Không ghi payload giao dịch/PII/secrets vào biên bản.
 
 [Nhật ký local](docs/training-log.md) là ví dụ đã tổng hợp các lần train. Raw [dataset/](dataset/), [artifacts/](artifacts/), [docs/](docs/) và AGENTS.md đang được Git ignore theo yêu cầu; clone mới cần dataset/artifact được cung cấp riêng. README này được quản lý trong Git, không phụ thuộc việc phải train lại mới hiểu quy trình.
+
+
+### Image tự động sau cải thiện
+
+Lệnh `python -m workflow.improve_model --config configs/improvement-round2.json` nay thực hiện nối tiếp: chọn winner → đánh giá gate → đăng ký Registry → xuất/load lại model → build image local. Không cần chạy lệnh build riêng khi run thành công. Không có candidate đủ điều kiện thì `report.image.status=skipped` và không gọi Docker.
+
+[build_model_image.py](workflow/build_model_image.py) build runtime từ Dockerfile hiện có, sau đó tạo image chứa riêng model đã xuất và manifest Linux `/opt/fraud/manifest.json`. Context đóng gói chỉ chứa model/manifest/Dockerfile, không nới `.dockerignore` để đưa raw dataset vào image. Tag là `fraud-api:v<version>-<parent_run_id>`; labels ghi version/run. `image.json` và report lưu imageID/tag/version, log tại `docker-build.log`; run MLflow thành công có các artifact này. Không push image, không tự start container/deploy, không sửa manifest mặc định hoặc production alias.
+
+Nếu build lỗi, tiến trình exit khác0, report ghi `image.status=failed`; model đã đăng ký vẫn được giữ, không rollback/xóa version. Sau khi sửa Docker/dependency, chỉ retry build từ report của chính run đó, không retrain:
+
+```powershell
+# Thay RUN_ID bằng parent run đã đạt gate và đăng ký/load lại thành công.
+python -m workflow.build_model_image --report artifacts/improvements/RUN_ID/report.json
+```
+
+Lệnh retry cập nhật report/image/log cục bộ; không tự đồng bộ lại artifact MLflow. Report run không đạt gate vẫn bị bỏ qua. Image cần được smoke test và Trivy scan trước khi cân nhắc sử dụng; build thành công chưa có nghĩa scan hoặc chất lượng vận hành đạt.
+
+Để kiểm tra image vừa build mà không cần kết nối MLflow (thay tag bằng giá trị `image.tag` trong report):
+
+```powershell
+docker run --detach --name fraud-api-improved-check --publish 127.0.0.1:18003:8000 fraud-api:vVERSION-RUN_ID
+python workflow/smoke_container.py --url http://127.0.0.1:18003 --manifest artifacts/improvements/RUN_ID/manifest.local.json
+trivy image --severity HIGH,CRITICAL --scanners vuln --exit-code 1 fraud-api:vVERSION-RUN_ID
+docker stop fraud-api-improved-check
+docker rm fraud-api-improved-check
+```
+
+Các tag/RUN_ID trên là placeholder cần thay, không phải version mới đã tạo. Hiện các candidate đã train vẫn không vượt v2 nên chưa có image từ nhánh thắng thực tế; tests dùng giả lập subprocess Docker để kiểm tra gate/đóng gói/lỗi, không giả lập metrics thành kết quả model mới.

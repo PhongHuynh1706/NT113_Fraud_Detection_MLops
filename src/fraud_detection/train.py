@@ -189,7 +189,9 @@ def train(config, output_root=Path("artifacts"), tracking_uri=None):
                 "feature_count": len(features),
             }
         )
-        baseline = DummyClassifier(strategy="prior").fit(x_train, y_train)
+        baseline = DummyClassifier(strategy="prior", random_state=config["seed"]).fit(
+            x_train, y_train
+        )
         choices = {}
         with threadpool_limits(limits=config["max_threads"]):
             for name, pipeline in candidates.items():

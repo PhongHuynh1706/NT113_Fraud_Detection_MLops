@@ -1,3 +1,5 @@
+import asyncio
+
 import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
@@ -129,3 +131,19 @@ def test_predictor_value_error_is_server_failure(runtime):
         )
         assert response.status_code == 500
         assert "sensitive" not in response.text
+
+
+def test_lifespan_cleans_model_and_readiness_on_exception(runtime):
+    app = create_app(lambda: runtime)
+    metrics_endpoint = next(route.endpoint for route in app.routes if route.path == "/metrics")
+
+    async def interrupted_lifespan():
+        async with app.router.lifespan_context(app):
+            assert app.state.runtime is runtime
+            assert b"fraud_model_ready 1.0" in metrics_endpoint().body
+            raise RuntimeError("simulated lifespan interruption")
+
+    with pytest.raises(RuntimeError, match="simulated lifespan interruption"):
+        asyncio.run(interrupted_lifespan())
+    assert app.state.runtime is None
+    assert b"fraud_model_ready 0.0" in metrics_endpoint().body

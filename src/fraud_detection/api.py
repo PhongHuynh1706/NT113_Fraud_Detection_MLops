@@ -67,9 +67,11 @@ def create_app(loader: Callable[[], ModelRuntime] | None = None) -> FastAPI:
             # Avoid leaking credentials, artifact URIs or data through exceptions.
             logger.error("Model initialization failed; check model configuration and connectivity")
             ready.set(0)
-        yield
-        app.state.runtime = None
-        ready.set(0)
+        try:
+            yield
+        finally:
+            app.state.runtime = None
+            ready.set(0)
 
     app = FastAPI(title="Fraud Detection API", version="0.1.0", lifespan=lifespan)
 

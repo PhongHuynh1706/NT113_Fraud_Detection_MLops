@@ -1,0 +1,27 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: fraud-api
+  namespace: monitoring
+  labels:
+    release: monitoring
+spec:
+  groups:
+    - name: fraud-api
+      rules:
+        - alert: FraudApiHighErrorRate
+          expr: |
+            sum by (namespace) (rate(fraud_http_requests_total{route="/predict",status=~"5.."}[5m]))
+            / clamp_min(sum by (namespace) (rate(fraud_http_requests_total{route="/predict"}[5m])), 0.001) > 0.05
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Fraud API prediction error rate exceeds 5%"
+        - alert: FraudApiNoReadyReplicas
+          expr: kube_deployment_status_replicas_available{deployment="fraud-api"} == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Fraud API has no ready replicas"

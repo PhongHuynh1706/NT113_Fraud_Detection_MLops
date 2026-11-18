@@ -1,0 +1,31 @@
+services:
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v3.18.0
+    command:
+      - mlflow
+      - server
+      - --host=0.0.0.0
+      - --port=5000
+      - --backend-store-uri=sqlite:////mlflow/mlflow.db
+      - --artifacts-destination=/mlflow/artifacts
+      - --serve-artifacts
+      - --allowed-hosts=localhost:*,127.0.0.1:*,mlflow:5000
+    ports:
+      - "127.0.0.1:5000:5000"
+    volumes:
+      - mlflow-data:/mlflow
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      MODEL_MANIFEST: /models/manifest.json
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+    volumes:
+      - ../artifacts:/models:ro
+    depends_on:
+      - mlflow
+volumes:
+  mlflow-data:

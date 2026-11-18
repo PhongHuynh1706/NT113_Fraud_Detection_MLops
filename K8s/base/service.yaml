@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: fraud-api
+  labels:
+    app: fraud-api
+spec:
+  selector:
+    app: fraud-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

@@ -1,0 +1,16 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fraud-api
+spec:
+  rules:
+    - host: fraud.example.invalid
+      http:
+        paths:
+          - path: /predict
+            pathType: Exact
+            backend:
+              service:
+                name: fraud-api
+                port:
+                  name: http

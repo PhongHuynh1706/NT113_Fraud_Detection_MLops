@@ -1,0 +1,64 @@
+name: Deploy approved image
+on:
+  workflow_call:
+    inputs:
+      environment:
+        type: string
+        required: true
+      image:
+        type: string
+        required: true
+  workflow_dispatch:
+    inputs:
+      environment:
+        type: choice
+        options: [test, production]
+        required: true
+      image:
+        description: Previously scanned GHCR image including @sha256 digest
+        type: string
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: deploy-${{ inputs.environment }}
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: azure/setup-kubectl@v4
+        with:
+          version: v1.36.1
+      - run: pip install -e '.[dev]'
+      - name: Render versioned deployment
+        env:
+          TARGET_ENVIRONMENT: ${{ inputs.environment }}
+          DEPLOY_IMAGE: ${{ inputs.image }}
+          MODEL_MANIFEST_JSON: ${{ secrets.MODEL_MANIFEST_JSON }}
+          MLFLOW_TRACKING_URI: ${{ vars.MLFLOW_TRACKING_URI }}
+          INGRESS_HOST: ${{ vars.INGRESS_HOST }}
+          INGRESS_CLASS: ${{ vars.INGRESS_CLASS }}
+          INGRESS_TLS_SECRET: ${{ vars.INGRESS_TLS_SECRET }}
+          IMAGE_PULL_SECRET: ${{ vars.IMAGE_PULL_SECRET }}
+        run: python workflow/render.py "$TARGET_ENVIRONMENT" > "$RUNNER_TEMP/deployment.yaml"
+      - name: Apply and wait for readiness
+        env:
+          KUBECONFIG_CONTENT: ${{ secrets.KUBECONFIG }}
+          TARGET_ENVIRONMENT: ${{ inputs.environment }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          export KUBECONFIG="$RUNNER_TEMP/fraud-kubeconfig"
+          umask 077
+          printf '%s' "$KUBECONFIG_CONTENT" > "$KUBECONFIG"
+          namespace="fraud-$TARGET_ENVIRONMENT"
+          kubectl get namespace "$namespace"
+          kubectl apply --dry-run=server -f "$RUNNER_TEMP/deployment.yaml" > /dev/null
+          kubectl apply -f "$RUNNER_TEMP/deployment.yaml"
+          kubectl -n "$namespace" rollout status deployment/fraud-api --timeout=600s

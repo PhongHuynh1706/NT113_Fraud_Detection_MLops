@@ -1,0 +1,271 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fraud-dashboard
+  namespace: monitoring
+  labels:
+    grafana_dashboard: '1'
+data:
+  fraud-platform.json: |-
+    {
+      "uid": "fraud-detection",
+      "title": "Fraud Detection Platform",
+      "schemaVersion": 39,
+      "version": 1,
+      "refresh": "15s",
+      "time": {
+        "from": "now-30m",
+        "to": "now"
+      },
+      "templating": {
+        "list": [
+          {
+            "name": "DS_PROMETHEUS",
+            "type": "datasource",
+            "query": "prometheus",
+            "current": {
+              "text": "Prometheus",
+              "value": "prometheus"
+            }
+          },
+          {
+            "name": "namespace",
+            "type": "custom",
+            "query": "fraud-test,fraud-production",
+            "current": {
+              "text": "fraud-test",
+              "value": "fraud-test"
+            },
+            "includeAll": true,
+            "allValue": ".*",
+            "multi": true
+          }
+        ]
+      },
+      "panels": [
+        {
+          "id": 1,
+          "title": "Request / giây",
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 0,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "expr": "sum by (namespace) (rate(fraud_http_requests_total{route=\"/predict\",namespace=~\"$namespace\"}[1m]))",
+              "refId": "A",
+              "legendFormat": "{{namespace}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps"
+            },
+            "overrides": []
+          }
+        },
+        {
+          "id": 2,
+          "title": "Latency p95",
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 0,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, sum by (le, namespace) (rate(fraud_http_request_duration_seconds_bucket{route=\"/predict\",namespace=~\"$namespace\"}[5m])))",
+              "refId": "A",
+              "legendFormat": "{{namespace}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s"
+            },
+            "overrides": []
+          }
+        },
+        {
+          "id": 3,
+          "title": "Tỷ lệ lỗi 5xx",
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 8,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "expr": "sum by (namespace) (rate(fraud_http_requests_total{route=\"/predict\",status=~\"5..\",namespace=~\"$namespace\"}[5m])) / clamp_min(sum by (namespace) (rate(fraud_http_requests_total{route=\"/predict\",namespace=~\"$namespace\"}[5m])), 0.001)",
+              "refId": "A",
+              "legendFormat": "{{namespace}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit"
+            },
+            "overrides": []
+          }
+        },
+        {
+          "id": 4,
+          "title": "Tỷ lệ cảnh báo gian lận",
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 8,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "expr": "sum by (namespace) (rate(fraud_predictions_total{decision=\"fraud\",namespace=~\"$namespace\"}[5m])) / clamp_min(sum by (namespace) (rate(fraud_predictions_total{namespace=~\"$namespace\"}[5m])), 0.001)",
+              "refId": "A",
+              "legendFormat": "{{namespace}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit"
+            },
+            "overrides": []
+          }
+        },
+        {
+          "id": 5,
+          "title": "Replica sẵn sàng",
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 16,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "expr": "kube_deployment_status_replicas_available{deployment=\"fraud-api\",namespace=~\"$namespace\"}",
+              "refId": "A",
+              "legendFormat": "{{namespace}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short"
+            },
+            "overrides": []
+          }
+        },
+        {
+          "id": 6,
+          "title": "CPU cores",
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 16,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "expr": "sum by (namespace) (rate(container_cpu_usage_seconds_total{container=\"api\",pod=~\"fraud-api-.*\",namespace=~\"$namespace\"}[5m]))",
+              "refId": "A",
+              "legendFormat": "{{namespace}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short"
+            },
+            "overrides": []
+          }
+        },
+        {
+          "id": 7,
+          "title": "Memory working set",
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 24,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "expr": "sum by (namespace) (container_memory_working_set_bytes{container=\"api\",pod=~\"fraud-api-.*\",namespace=~\"$namespace\"})",
+              "refId": "A",
+              "legendFormat": "{{namespace}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes"
+            },
+            "overrides": []
+          }
+        },
+        {
+          "id": 8,
+          "title": "Model đã load",
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 24,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "expr": "fraud_model_ready{namespace=~\"$namespace\"}",
+              "refId": "A",
+              "legendFormat": "{{namespace}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short"
+            },
+            "overrides": []
+          }
+        }
+      ]
+    }

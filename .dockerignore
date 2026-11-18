@@ -1,0 +1,6 @@
+**
+!pyproject.toml
+!src/
+!src/**
+!docker/
+!docker/Dockerfile

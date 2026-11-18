@@ -1,0 +1,21 @@
+{
+  "dataset": "dataset/creditcard_2026.csv",
+  "label": "is_fraud",
+  "time_column": "transaction_datetime",
+  "features": [
+    "transaction_amount", "transaction_hour", "card_present", "used_chip",
+    "used_pin", "international_transaction", "high_risk_country",
+    "distance_from_home_km", "is_weekend"
+  ],
+  "train_fraction": 0.7,
+  "validation_fraction": 0.15,
+  "seed": 42,
+  "max_threads": 4,
+  "minimum_accuracy": 0.6,
+  "experiment": "fraud-detection",
+  "registered_model": "FraudDetection",
+  "candidates": {
+    "logistic": {"C": 1.0, "max_iter": 1000},
+    "hist_gradient_boosting": {"max_iter": 150, "max_leaf_nodes": 15, "learning_rate": 0.1, "l2_regularization": 1.0}
+  }
+}

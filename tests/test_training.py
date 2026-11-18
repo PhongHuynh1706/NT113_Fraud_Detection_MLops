@@ -33,12 +33,62 @@ def test_threshold_optimizes_validation_f1():
     assert evaluate(labels, scores, threshold)["f1"] == 1.0
 
 
+def test_threshold_precision_is_strict_and_requires_alert_support():
+    labels = np.array([0, 0, 1, 0, 1])
+    scores = np.array([0.1, 0.2, 0.3, 0.4, 0.9])
+    assert select_threshold(labels, scores, precision_target=0.6, minimum_alerts=3) == 0.3
+    assert select_threshold(labels, scores, precision_target=2 / 3, minimum_alerts=3) is None
+    assert select_threshold(np.array([0, 1]), np.array([0.9, 0.1]), precision_target=0.6) is None
+    with pytest.raises(ValueError):
+        select_threshold(labels, scores, precision_target=1.0)
+
+
+def test_numeric_time_split_uses_supplied_label_and_preserves_time_groups():
+    frame = pd.DataFrame({"Time": np.repeat(np.arange(20), 2), "Class": [0, 1] * 20})
+    parts = chronological_split(frame, "Time", label_column="Class")
+    assert len(parts[0]) == 28
+    assert parts[0].Time.max() < parts[1].Time.min()
+    assert parts[1].Time.max() < parts[2].Time.min()
+
+
+def test_ulb_training_deduplicates_feature_vectors_before_split(synthetic_training):
+    config, frame, output = synthetic_training
+    ulb = pd.DataFrame({f"V{i}": frame.signal.to_numpy() for i in range(1, 29)})
+    ulb["Amount"] = frame.drift.to_numpy()
+    ulb["Time"] = np.arange(len(frame))
+    ulb["Class"] = frame.is_fraud.to_numpy()
+    duplicate = ulb.iloc[[0]].assign(Time=100000)
+    dataset = Path(config["dataset"])
+    pd.concat([ulb, duplicate]).to_csv(dataset, index=False)
+    config.update(
+        dataset_kind="ulb",
+        label="Class",
+        time_column="Time",
+        features=[f"V{i}" for i in range(1, 29)] + ["Amount"],
+    )
+    report = train(config, output)
+    assert report["data_audit"]["duplicate_feature_rows_removed"] == 1
+    assert report["dataset_rows"] == 400
+    assert report["customer_overlap_train_test"] is None
+    assert report["acceptance_passed"]
+
+
 def test_split_rejects_single_class_partition():
     data = pd.DataFrame(
         {"transaction_datetime": pd.date_range("2025-01-01", periods=20), "is_fraud": [0] * 20}
     )
     with pytest.raises(ValueError, match="both classes"):
         chronological_split(data, "transaction_datetime")
+
+
+def test_threshold_recall_constraint_uses_validation_scores():
+    labels = np.array([1, 0, 0, 1, 1])
+    scores = np.array([0.1, 0.2, 0.3, 0.8, 0.9])
+    threshold = select_threshold(labels, scores, minimum_recall=0.9)
+    assert threshold == 0.1
+    assert evaluate(labels, scores, threshold)["recall"] == 1.0
+    with pytest.raises(ValueError, match="minimum_recall"):
+        select_threshold(labels, scores, minimum_recall=1.1)
 
 
 @pytest.fixture
@@ -61,12 +111,15 @@ def synthetic_training(tmp_path):
     config = json.loads(Path("configs/training.json").read_text(encoding="utf-8"))
     config.update(
         dataset=str(dataset),
+        dataset_kind="synthetic",
+        label="is_fraud",
+        time_column="transaction_datetime",
         features=["signal", "drift"],
         max_threads=1,
         experiment="synthetic-contract",
         registered_model="SyntheticTestOnly",
     )
-    config["candidates"]["hist_gradient_boosting"].update(max_iter=5, min_samples_leaf=5)
+    config["candidates"]["extra_trees"].update(n_estimators=10, min_samples_leaf=1)
     previous_tracking = mlflow.get_tracking_uri()
     previous_registry = mlflow.get_registry_uri()
     try:
@@ -93,12 +146,9 @@ def test_train_register_export_and_reload_without_preprocessing_leakage(syntheti
     np.testing.assert_allclose(exported, registry.predict(sample)["fraud_probability"])
     assert all(0 <= score <= 1 for score in exported)
     assert Path(manifest["model_uri"]).joinpath("MLmodel").is_file()
-    assert report["selected_model"] == "logistic"
+    assert report["selected_model"] == "extra_trees"
     fitted = registry.unwrap_python_model().pipeline
-    training, _, _ = chronological_split(frame, config["time_column"])
-    np.testing.assert_allclose(
-        fitted.named_steps["scale"].mean_, training[config["features"]].mean().to_numpy()
-    )
+    assert list(fitted.feature_names_in_) == config["features"]
     run = mlflow.MlflowClient().get_run(report["run_id"])
     assert run.info.status == "FINISHED"
     assert run.data.params["dataset_sha256"] == report["dataset_sha256"]

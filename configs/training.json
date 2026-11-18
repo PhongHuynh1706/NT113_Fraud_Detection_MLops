@@ -1,21 +1,66 @@
 {
-  "dataset": "dataset/creditcard_2026.csv",
-  "label": "is_fraud",
-  "time_column": "transaction_datetime",
+  "dataset": "dataset/creditcard.csv",
+  "dataset_kind": "ulb",
+  "label": "Class",
+  "time_column": "Time",
   "features": [
-    "transaction_amount", "transaction_hour", "card_present", "used_chip",
-    "used_pin", "international_transaction", "high_risk_country",
-    "distance_from_home_km", "is_weekend"
+    "V1",
+    "V2",
+    "V3",
+    "V4",
+    "V5",
+    "V6",
+    "V7",
+    "V8",
+    "V9",
+    "V10",
+    "V11",
+    "V12",
+    "V13",
+    "V14",
+    "V15",
+    "V16",
+    "V17",
+    "V18",
+    "V19",
+    "V20",
+    "V21",
+    "V22",
+    "V23",
+    "V24",
+    "V25",
+    "V26",
+    "V27",
+    "V28",
+    "Amount"
   ],
   "train_fraction": 0.7,
   "validation_fraction": 0.15,
   "seed": 42,
   "max_threads": 4,
   "minimum_accuracy": 0.6,
-  "experiment": "fraud-detection",
+  "precision_target_exclusive": 0.6,
+  "minimum_validation_alerts": 20,
+  "experiment": "fraud-ulb-chronological",
   "registered_model": "FraudDetection",
   "candidates": {
-    "logistic": {"C": 1.0, "max_iter": 1000},
-    "hist_gradient_boosting": {"max_iter": 150, "max_leaf_nodes": 15, "learning_rate": 0.1, "l2_regularization": 1.0}
-  }
+    "extra_trees": {
+      "n_estimators": 200,
+      "min_samples_leaf": 2,
+      "max_features": 0.8,
+      "class_weight": "balanced"
+    }
+  },
+  "limitations": [
+    "ULB/Worldline data: two days in 2013; offline demo only.",
+    "Upstream PCA fitting cannot be audited; no raw-to-PCA transform for real transactions.",
+    "No customer IDs; no unseen-customer guarantee.",
+    "Identical feature vectors deduplicated keeping earliest Time.",
+    "Registration: accuracy >60% and precision >60%; recall reported without a business minimum.",
+    "Validation threshold still requires recall >=80%, unchanged from the locked experiment.",
+    "Previously evaluated test reused; no fresh independent validation claim.",
+    "No production alias or cluster deployment."
+  ],
+  "threshold_minimum_recall": 0.8,
+  "holdout_status": "Previously evaluated ULB holdout; locked model and threshold selection retained; this run is not independent validation."
 }

@@ -16,8 +16,7 @@ import numpy as np
 import pandas as pd
 from mlflow.models import infer_signature
 from sklearn.dummy import DummyClassifier
-from sklearn.ensemble import HistGradientBoostingClassifier
-from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import ExtraTreesClassifier
 from sklearn.metrics import (
     accuracy_score,
     average_precision_score,
@@ -29,7 +28,6 @@ from sklearn.metrics import (
     roc_auc_score,
 )
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
 from threadpoolctl import threadpool_limits
 
 from fraud_detection.model import ModelManifest, ModelRuntime
@@ -47,10 +45,16 @@ FORBIDDEN_FEATURES = {
 }
 
 
-def chronological_split(frame, time_column, train_fraction=0.7, validation_fraction=0.15):
+def chronological_split(
+    frame, time_column, train_fraction=0.7, validation_fraction=0.15, label_column="is_fraud"
+):
     if not 0 < train_fraction < train_fraction + validation_fraction < 1:
         raise ValueError("Invalid split fractions")
-    timestamps = pd.to_datetime(frame[time_column], errors="raise", utc=True)
+    timestamps = (
+        frame[time_column]
+        if pd.api.types.is_numeric_dtype(frame[time_column])
+        else (pd.to_datetime(frame[time_column], errors="raise", utc=True))
+    )
     if timestamps.isna().any():
         raise ValueError("Missing transaction timestamps")
     ordered_times = timestamps.sort_values()
@@ -62,14 +66,29 @@ def chronological_split(frame, time_column, train_fraction=0.7, validation_fract
         timestamps >= second,
     )
     splits = tuple(frame.loc[mask].sort_values(time_column).copy() for mask in masks)
-    if any(part.empty or part["is_fraud"].nunique() != 2 for part in splits):
+    if any(part.empty or part[label_column].nunique() != 2 for part in splits):
         raise ValueError("Each chronological split needs both classes")
     return splits
 
 
-def select_threshold(labels, probabilities):
+def select_threshold(
+    labels, probabilities, minimum_recall=None, precision_target=None, minimum_alerts=1
+):
     precision, recall, thresholds = precision_recall_curve(labels, probabilities)
     f1 = 2 * precision[:-1] * recall[:-1] / np.maximum(precision[:-1] + recall[:-1], 1e-15)
+    if minimum_recall is not None:
+        if not 0 < minimum_recall <= 1:
+            raise ValueError("minimum_recall must be in (0, 1]")
+        f1 = np.where(recall[:-1] >= minimum_recall, f1, -1.0)
+    if precision_target is not None:
+        if not 0 <= precision_target < 1 or minimum_alerts < 1:
+            raise ValueError("Invalid precision target or minimum alerts")
+        alerts = len(probabilities) - np.searchsorted(
+            np.sort(probabilities), thresholds, side="left"
+        )
+        f1 = np.where((precision[:-1] > precision_target) & (alerts >= minimum_alerts), f1, -1.0)
+        if np.max(f1) < 0:
+            return None
     return float(thresholds[int(np.argmax(f1))])
 
 
@@ -101,9 +120,20 @@ def train(config, output_root=Path("artifacts"), tracking_uri=None):
         raise ValueError("Duplicate feature names")
     dataset = Path(config["dataset"])
     frame = pd.read_csv(dataset)
-    if config["label"] != "is_fraud" or set(frame[config["label"]].unique()) != {0, 1}:
-        raise ValueError("Expected complete binary is_fraud labels")
-    if frame["transaction_id"].duplicated().any():
+    if set(frame[config["label"]].unique()) != {0, 1}:
+        raise ValueError("Expected complete binary labels")
+    audit = {"raw_rows": len(frame)}
+    if config.get("dataset_kind") == "ulb":
+        expected = {"Time", "Amount", "Class"} | {f"V{i}" for i in range(1, 29)}
+        if set(frame) != expected or config["label"] != "Class":
+            raise ValueError("Unexpected ULB schema")
+        # Identical inputs can recur at later times. Keep only the first occurrence,
+        # ensuring duplicated vectors never cross chronological split boundaries.
+        if (frame.groupby(features, dropna=False)["Class"].nunique() > 1).any():
+            raise ValueError("Identical ULB feature vectors have conflicting labels")
+        frame = frame.sort_values("Time").drop_duplicates(subset=features).copy()
+        audit["duplicate_feature_rows_removed"] = audit["raw_rows"] - len(frame)
+    elif frame["transaction_id"].duplicated().any():
         raise ValueError("Duplicate transaction IDs must be investigated before training")
     values = frame[features]
     if not all(pd.api.types.is_numeric_dtype(dtype) for dtype in values.dtypes):
@@ -113,7 +143,11 @@ def train(config, output_root=Path("artifacts"), tracking_uri=None):
     # Match the API's numeric serving contract and the MLflow double signature.
     frame[features] = frame[features].astype("float64")
     train_set, validation, test = chronological_split(
-        frame, config["time_column"], config["train_fraction"], config["validation_fraction"]
+        frame,
+        config["time_column"],
+        config["train_fraction"],
+        config["validation_fraction"],
+        config["label"],
     )
     x_train, y_train = train_set[features], train_set[config["label"]]
     x_val, y_val = validation[features], validation[config["label"]]
@@ -131,39 +165,26 @@ def train(config, output_root=Path("artifacts"), tracking_uri=None):
             config["experiment"], artifact_location=(root / "mlflow-artifacts").as_uri()
         )
     )
-    candidates = {
-        "logistic": Pipeline(
-            [
-                ("scale", StandardScaler()),
-                (
-                    "classifier",
-                    LogisticRegression(
-                        class_weight="balanced",
-                        random_state=config["seed"],
-                        **config["candidates"]["logistic"],
-                    ),
-                ),
-            ]
-        ),
-        "hist_gradient_boosting": Pipeline(
+    candidates = {}
+    if "extra_trees" in config["candidates"]:
+        candidates["extra_trees"] = Pipeline(
             [
                 (
                     "classifier",
-                    HistGradientBoostingClassifier(
-                        class_weight="balanced",
-                        early_stopping=False,
+                    ExtraTreesClassifier(
                         random_state=config["seed"],
-                        **config["candidates"]["hist_gradient_boosting"],
+                        n_jobs=config["max_threads"],
+                        **config["candidates"]["extra_trees"],
                     ),
                 )
             ]
-        ),
-    }
+        )
     with mlflow.start_run(experiment_id=experiment_id, run_name="chronological-training") as run:
         folder = root / "training" / run.info.run_id
         folder.mkdir(parents=True)
         fingerprint = hashlib.sha256(dataset.read_bytes()).hexdigest()
         source_hash = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+        (folder / "training-source.py").write_bytes(Path(__file__).read_bytes())
         revision = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True)
         commit = revision.stdout.strip() if revision.returncode == 0 else "uncommitted"
         versions = {
@@ -182,7 +203,7 @@ def train(config, output_root=Path("artifacts"), tracking_uri=None):
                 "seed": config["seed"],
                 "dataset_sha256": fingerprint,
                 "split": "chronological_70_15_15",
-                "threshold_objective": "validation_f1",
+                "threshold_objective": "validation_f1_with_optional_recall_constraint",
                 "training_source_sha256": source_hash,
                 "git_commit": commit,
                 "max_threads": config["max_threads"],
@@ -197,9 +218,26 @@ def train(config, output_root=Path("artifacts"), tracking_uri=None):
             for name, pipeline in candidates.items():
                 pipeline.fit(x_train, y_train)
                 probability = pipeline.predict_proba(x_val)[:, list(pipeline.classes_).index(1)]
-                threshold = select_threshold(y_val, probability)
+                threshold = select_threshold(
+                    y_val,
+                    probability,
+                    config.get("threshold_minimum_recall", config.get("minimum_recall")),
+                    config.get("precision_target_exclusive"),
+                    config.get("minimum_validation_alerts", 1),
+                )
+                feasible = threshold is not None
+                if threshold is None:
+                    threshold = select_threshold(
+                        y_val,
+                        probability,
+                        config.get("threshold_minimum_recall", config.get("minimum_recall")),
+                    )
                 metrics = evaluate(y_val, probability, threshold)
-                choices[name] = {"threshold": threshold, "validation": metrics}
+                choices[name] = {
+                    "threshold": threshold,
+                    "validation": metrics,
+                    "threshold_constraints_met": feasible,
+                }
                 mlflow.log_metrics(
                     {
                         f"validation_{name}_{k}": v
@@ -211,6 +249,7 @@ def train(config, output_root=Path("artifacts"), tracking_uri=None):
             winner = max(
                 choices,
                 key=lambda name: (
+                    choices[name]["threshold_constraints_met"],
                     choices[name]["validation"]["f1"],
                     choices[name]["validation"]["pr_auc"],
                 ),
@@ -230,6 +269,16 @@ def train(config, output_root=Path("artifacts"), tracking_uri=None):
             test_metrics["accuracy"] > config["minimum_accuracy"]
             and test_metrics["f1"] > baseline_metrics["f1"]
             and test_metrics["pr_auc"] > baseline_metrics["pr_auc"]
+            and all(
+                metrics[metric] >= config.get(f"minimum_{metric}", 0.0)
+                for metrics in (choices[winner]["validation"], test_metrics)
+                for metric in ("recall", "precision")
+            )
+            and all(
+                metrics["precision"] > config.get("precision_target_exclusive", -1.0)
+                for metrics in (choices[winner]["validation"], test_metrics)
+            )
+            and choices[winner]["threshold_constraints_met"]
         )
         split_info = {}
         for name, part in zip(
@@ -237,7 +286,7 @@ def train(config, output_root=Path("artifacts"), tracking_uri=None):
         ):
             split_info[name] = {
                 "rows": len(part),
-                "fraud_count": int(part.is_fraud.sum()),
+                "fraud_count": int(part[config["label"]].sum()),
                 "time_min": str(part[config["time_column"]].min()),
                 "time_max": str(part[config["time_column"]].max()),
             }
@@ -245,8 +294,10 @@ def train(config, output_root=Path("artifacts"), tracking_uri=None):
             "run_id": run.info.run_id,
             "tracking_uri": uri,
             "dataset_sha256": fingerprint,
+            "holdout_status": config.get("holdout_status", "initial_evaluation"),
+            "data_audit": audit,
             "dataset_rows": len(frame),
-            "fraud_count": int(frame.is_fraud.sum()),
+            "fraud_count": int(frame[config["label"]].sum()),
             "features": features,
             "excluded_columns": [c for c in frame if c not in features],
             "missing_by_column": frame.isna().sum().astype(int).to_dict(),
@@ -257,17 +308,31 @@ def train(config, output_root=Path("artifacts"), tracking_uri=None):
             "test": test_metrics,
             "baseline_test": baseline_metrics,
             "acceptance_passed": passed,
+            "acceptance_requirements": {
+                "minimum_accuracy_exclusive": config["minimum_accuracy"],
+                "minimum_recall": config.get("minimum_recall", 0.0),
+                "minimum_precision": config.get("minimum_precision", 0.0),
+                "precision_target_exclusive": config.get("precision_target_exclusive"),
+                "scope": "validation and test for recall/precision; test for baseline improvement",
+            },
             "versions": versions,
             "git_commit": commit,
-            "customer_overlap_train_test": len(set(train_set.customer_id) & set(test.customer_id)),
-            "limitations": [
-                "Dataset provenance/label maturity unverified; some timestamps are in the future.",
-                "Repeated-customer chronological evaluation, not an unseen-customer benchmark.",
-                "Historical aggregates excluded until point-in-time construction is verified.",
-                "Threshold maximizes validation F1; business cost/alert budget unspecified.",
-                "Precomputed flags/distance need provenance checks before production.",
-                "No production readiness claim; no production model alias is updated.",
-            ],
+            "customer_overlap_train_test": (
+                len(set(train_set.customer_id) & set(test.customer_id))
+                if "customer_id" in frame
+                else None
+            ),
+            "limitations": config.get(
+                "limitations",
+                [
+                    "Dataset/label provenance unverified; future timestamps possible.",
+                    "Repeated-customer chronological evaluation, not an unseen-customer benchmark.",
+                    "Historical aggregates excluded until point-in-time construction is verified.",
+                    "Threshold maximizes validation F1 with configured recall; costs unspecified.",
+                    "Precomputed flags/distance need provenance checks before production.",
+                    "No production readiness claim; no production model alias is updated.",
+                ],
+            ),
         }
         mlflow.log_params({"selected_model": winner, "threshold": threshold})
         mlflow.log_metrics(
@@ -285,7 +350,7 @@ def train(config, output_root=Path("artifacts"), tracking_uri=None):
         write_json(folder / "dependencies.json", versions)
         write_json(folder / "report.json", report)
         # Source is retained because this repository may not yet have a commit.
-        mlflow.log_artifact(str(Path(__file__)), artifact_path="source")
+        mlflow.log_artifact(str(folder / "training-source.py"), artifact_path="source")
         mlflow.log_artifact(
             str(Path(__file__).with_name("probability_model.py")), artifact_path="source"
         )
@@ -363,7 +428,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, default=Path("configs/training.json"))
     parser.add_argument("--output", type=Path, default=Path("artifacts"))
-    parser.add_argument("--tracking-uri", default=os.getenv("MLFLOW_TRACKING_URI"))
+    parser.add_argument(
+        "--tracking-uri", default=os.getenv("MLFLOW_TRACKING_URI", "http://127.0.0.1:5000")
+    )
     args = parser.parse_args()
     config = json.loads(args.config.read_text(encoding="utf-8"))
     train(config, args.output, args.tracking_uri)

@@ -35,6 +35,4 @@ terraform.tfvars
 kubeconfig*
 .deploy/
 /AGENTS.md
-.md
-
-docs/
+/docs/

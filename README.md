@@ -3,13 +3,49 @@
 Khung nền tảng phục vụ model phát hiện gian lận: FastAPI, MLflow, Docker,
 GitHub Actions, Kubernetes HPA, Prometheus/Grafana, Terraform và Locust.
 
-Hiện chưa có file train hoặc model đã huấn luyện. API chỉ sẵn sàng dự đoán khi
-được cấu hình artifact thật; không có model giả thay thế trong ứng dụng.
+Pipeline hiện dùng ULB/Worldline (`dataset/creditcard.csv`), nhãn `Class`, đầu vào
+`V1`–`V28` và `Amount`. Extra Trees được train theo thời gian `Time`, khử trùng vector
+trước split và chọn threshold trên validation. Chỉ đăng ký khi accuracy >60%, precision >60%
+và vượt baseline về F1/AP; recall luôn được báo cáo, chưa có ngưỡng nghiệp vụ được xác nhận.
+Đây là benchmark offline, chưa phải xác nhận model đủ điều kiện quyết định giao dịch thật.
 Các model tổng hợp trong tests chỉ kiểm tra hợp đồng tích hợp, không đo chất lượng fraud detection.
-Dữ liệu `creditcard_2026.csv` được giữ cục bộ, không dùng làm payload ví dụ và
+Dữ liệu `creditcard.csv` được giữ cục bộ, không dùng làm payload ví dụ và
 được loại khỏi Git cũng như Docker build context.
 
 ## Chạy cục bộ
+
+Huấn luyện từ thư mục gốc bằng cấu hình mặc định:
+
+```powershell
+conda activate fraud-mlops
+python -m fraud_detection.train --config configs/training.json --tracking-uri http://127.0.0.1:5000
+```
+
+Mỗi lần train tạo run/version mới khi đạt gate. Không train lại chỉ để xem model.
+Mở MLflow tại http://localhost:5000 để xem experiment và Registered Models.
+CLI mặc định ghi vào server này, có thể đổi bằng `MLFLOW_TRACKING_URI` hoặc `--tracking-uri`.
+Backend SQLite cũ trong `artifacts/mlflow.db` là kho riêng; v1/v2 được sao chép sang server
+bằng `python -m workflow.sync_mlflow`, không train lại. Server Docker phải chạy khi dùng backend HTTP.
+API đọc manifest local sau huấn luyện. Artifact/manifest chứa đường dẫn local,
+cần điều chỉnh khi chuyển máy. Đồng bộ Registry không tự đổi model đang phục vụ.
+
+```powershell
+$env:MODEL_MANIFEST = 'D:/MLops_Fraud_Detection/artifacts/manifest.json'
+uvicorn fraud_detection.api:app --host 127.0.0.1 --port 8000 --no-access-log
+```
+
+Payload tổng hợp đúng schema ULB để thử `/predict`:
+
+```powershell
+$row = @{}
+1..28 | ForEach-Object { $row["V$_"] = 0.0 }
+$row['Amount'] = 0.0
+$body = @{ instances = @($row) } | ConvertTo-Json -Depth 4
+Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:8000/predict' -ContentType 'application/json' -Body $body
+```
+
+Phần ví dụ schema tổng quát bên dưới dùng để giải thích hợp đồng; khi chạy thật,
+dùng đầy đủ 29 cột và version/threshold từ manifest được train, không dùng `synthetic_a/b`.
 
 Mã nguồn khai báo Python 3.11–3.13; CI kiểm tra Python 3.11. Phạm vi này là cấu hình
 dự án, không phải xác nhận đã kiểm thử mọi phiên bản. Dùng môi trường Conda được
@@ -28,7 +64,7 @@ Kiểm tra `/health/live`, `/health/ready`, `/docs` và `/metrics` trên cổng 
 Khi chưa có model: live trả 200; ready và predict trả 503.
 Ứng dụng không tự đọc `.env`; xuất biến môi trường bằng shell.
 
-## Hợp đồng tích hợp file train sau
+## Hợp đồng model và inference
 
 Model MLflow phải chứa preprocessing cùng logic dự đoán, nhận pandas DataFrame
 và trả DataFrame có cột `fraud_probability`: xác suất gian lận trong [0, 1],
@@ -64,9 +100,10 @@ Chỉ load artifact tin cậy. Cài thêm dependency của model thật khi tíc
 MLflow load model không tự cài toàn bộ môi trường huấn luyện vào API.
 Model được load một lần khi khởi động; sau khi sửa manifest, khởi động lại API.
 
-File train sẽ cần ghi MLflow params, dataset fingerprint, seed, commit, dependency,
-threshold chọn trên validation, signature và metrics. Đánh giá accuracy > 60% trên
-test độc lập cùng PR-AUC, precision, recall, F1 và confusion matrix; hiện chưa có kết quả.
+Pipeline train ghi MLflow params, dataset fingerprint, seed, commit, dependency,
+threshold chọn trên validation, signature và metrics. Báo cáo accuracy, AP, precision,
+recall, F1, ROC-AUC và confusion matrix nằm cùng artifact của từng run. Holdout ULB đã
+được xem trong thử nghiệm trước; lần train lại không phải kiểm chứng độc lập trên dữ liệu mới.
 
 ## Docker và MLflow cho phát triển
 

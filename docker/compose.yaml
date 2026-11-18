@@ -34,7 +34,7 @@ services:
       context: ../src/web
       dockerfile: Dockerfile
     ports:
-      - "127.0.0.1:8080:80"
+      - "127.0.0.1:8080:8080"
     volumes:
       - ../src/web/config.docker.js:/usr/share/nginx/html/config.js:ro
 volumes:

@@ -167,7 +167,7 @@ Model thật đã được huấn luyện và đăng ký Registry cục bộ. Xe
 - Tracking/Registry: SQLite cục bộ `artifacts/mlflow.db`; artifact trong `artifacts/`. Đây là backend riêng với MLflow trong Docker Compose, dữ liệu không tự đồng bộ giữa hai backend.
 - Đã kiểm chứng load lại model nhất quán trên 128 dòng, load Registry v1, API trả 200 với payload tổng hợp và scaler chỉ fit trên train.
 - Lỗi MLflow int64/double ở lần xuất đầu đã sửa bằng chuẩn hóa đầu vào `float64`; chạy lại cùng cấu hình thành công. Có test hồi quy cho đầu vào JSON số nguyên.
-- Sau thay đổi training: **31 tests vượt qua**, Ruff lint/format đạt. Chưa chạy build image, deploy hoặc load test với model v1.
+- Sau thay đổi training: **31 tests vượt qua**, Ruff lint/format đạt. Sau sửa container đã build image Wolfi/Python 3.11.18, scan Trivy HIGH/CRITICAL exit 0 và chạy API local với model v1 thành công; xem [kiểm chứng container](./docs/container-validation.md). Chưa deploy Kubernetes hoặc load test với model v1.
 - Dataset chứa timestamp tới 31/12/2026, sau ngày huấn luyện 18/11/2026; chỉ xem đây là đánh giá offline trên file được cung cấp. Có 6.817 khách hàng xuất hiện cả train và test, chưa phải benchmark khách hàng hoàn toàn mới.
 - Test v1 đã được dùng để báo cáo; các vòng cải tiến tiếp theo vẫn phải tuning trên validation. Cần test mới trước kết luận production nếu lặp nhiều vòng đánh giá.
 - Môi trường: **Anaconda `fraud-mlops`, Python 3.11.18**.

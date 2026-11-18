@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Transaction Lab · Fraud Detection</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header><small>FRAUD DETECTION / LOCAL DEMO</small><h1>Transaction Lab</h1><p>Thử một giao dịch, xem điểm dự đoán và quyết định của model đang chạy. Dùng chung API với kịch bản load test Locust.</p></header>
+<main>
+<div class="status"><span class="pill" id="status" role="status">Đang kết nối model…</span><span class="pill" id="version">Version —</span><span class="pill" id="threshold">Threshold —</span><button id="refresh">Kiểm tra lại</button></div>
+<div class="notice">Dữ liệu ULB dùng các thành phần PCA V1–V28. Chỉ nhập số tiền hoặc thông tin thẻ thông thường không đủ để dự đoán đúng schema này. Mẫu tổng hợp không phải giao dịch thật, không có nhãn đúng/sai và không dùng để đo precision/recall. Không nhập thông tin thẻ hay dữ liệu cá nhân.</div>
+<div class="layout">
+<section class="card"><h2>01 / Giao dịch thử nghiệm</h2><p class="muted">Nhập đặc trưng theo schema của model, hoặc dùng mẫu tổng hợp để thử luồng.</p>
+<form id="form"><div id="amount"></div><details><summary>Đặc trưng model / PCA</summary><div id="features" class="grid"></div></details>
+<div class="actions"><button type="button" id="sample">Tạo mẫu tổng hợp</button><button type="button" id="reset">Đưa về 0</button></div>
+<button class="primary" id="submit" disabled>Gửi giao dịch</button></form>
+<details id="batch-panel"><summary>Gửi JSON / batch và xuất payload Locust</summary><label for="count">Số giao dịch tổng hợp (1–256)</label><input id="count" type="number" min="1" max="256" step="1" value="100"><div class="actions"><button id="random-batch">Tạo batch ngẫu nhiên</button><button id="test-batch">Gửi batch đang có</button></div><p class="muted">V1–V28 ngẫu nhiên trong [-5, 5]; Amount trong [0, 5000]. Không mô phỏng phân bố giao dịch thật và không đảm bảo có cảnh báo fraud.</p><label for="payload">Payload: {"instances": [...]}, tối đa 256 dòng</label><textarea id="payload" spellcheck="false" placeholder='{"instances": [{"V1": 0, "…": 0, "Amount": 0}]}'></textarea><div class="actions"><button id="from-form">Lấy từ biểu mẫu</button><button id="send-json">Gửi JSON</button><button id="export">Tải payload Locust</button></div></details>
+<p class="error" id="error" role="alert"></p></section>
+<section class="card"><h2>02 / Kết quả model</h2><p class="muted">Cảnh báo khi score ≥ threshold của model. Đây là quyết định của model, chưa phải kết luận điều tra gian lận.</p>
+<output id="result" aria-live="polite"><div id="empty">Chưa có giao dịch. Gửi một mẫu để xem kết quả.</div></output>
+<div class="scroll"><table id="table" hidden><thead><tr><th>#</th><th>Score</th><th>Quyết định</th></tr></thead><tbody id="rows"></tbody></table></div>
+<p class="muted" id="timing"></p><div class="actions"><button id="clear">Xóa kết quả</button><a href="/docs" target="_blank" rel="noopener">API docs ↗</a></div>
+<p class="muted">Không lưu payload trong trình duyệt. Trang này gửi request khi bạn bấm nút; không tự chạy load test.</p></section>
+</div><footer>Kiểm thử giao dịch → API /predict → model đang được load. Để kiểm tra tải đồng thời, xuất payload và dùng Locust.</footer>
+</main>
+<script src="config.js" defer></script><script src="app.js" defer></script></body></html>

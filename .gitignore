@@ -17,6 +17,7 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 .ruff_cache/
+.vscode/
 .coverage
 coverage.xml
 htmlcov/

@@ -59,6 +59,42 @@ def test_prediction_threshold_and_order(runtime):
         assert 'route="/predict",status="200"' in metrics
 
 
+def test_public_model_schema_without_web(runtime):
+    with TestClient(create_app(lambda: runtime)) as client:
+        assert client.get("/").status_code == 404
+        info = client.get("/model-info").json()
+        assert info == {
+            "model_version": "test-only",
+            "threshold": 0.7,
+            "features": ["synthetic_a", "synthetic_b"],
+            "max_batch_size": 256,
+        }
+        assert "model_uri" not in info
+
+
+def test_public_schema_unavailable_without_model(monkeypatch):
+    monkeypatch.delenv("MODEL_MANIFEST", raising=False)
+    with TestClient(create_app()) as client:
+        assert client.get("/").status_code == 404
+        assert client.get("/model-info").status_code == 503
+
+
+def test_web_cors_only_allows_configured_origin(runtime, monkeypatch):
+    monkeypatch.setenv("WEB_ORIGINS", "http://127.0.0.1:8080")
+    with TestClient(create_app(lambda: runtime)) as client:
+        headers = {
+            "Origin": "http://127.0.0.1:8080",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type",
+        }
+        allowed = client.options("/predict", headers=headers)
+        assert allowed.status_code == 200
+        assert allowed.headers["access-control-allow-origin"] == headers["Origin"]
+        blocked = client.options("/predict", headers={**headers, "Origin": "http://untrusted.test"})
+        assert blocked.status_code == 400
+        assert "access-control-allow-origin" not in blocked.headers
+
+
 @pytest.mark.parametrize(
     "rows",
     [

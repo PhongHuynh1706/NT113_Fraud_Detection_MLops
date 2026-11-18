@@ -23,6 +23,7 @@ load = ["locust>=2.33,<3"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+include = ["fraud_detection*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram, generate_latest
 from prometheus_client.exposition import CONTENT_TYPE_LATEST
@@ -74,6 +75,30 @@ def create_app(loader: Callable[[], ModelRuntime] | None = None) -> FastAPI:
             ready.set(0)
 
     app = FastAPI(title="Fraud Detection API", version="0.1.0", lifespan=lifespan)
+
+    origins = [
+        origin.strip() for origin in os.getenv("WEB_ORIGINS", "").split(",") if origin.strip()
+    ]
+    if origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=origins,
+            allow_methods=["GET", "POST"],
+            allow_headers=["Content-Type"],
+        )
+
+    @app.get("/model-info")
+    def model_info(request: Request):
+        runtime = request.app.state.runtime
+        if runtime is None:
+            raise HTTPException(503, "Model is not ready")
+        manifest = runtime.manifest
+        return {
+            "model_version": manifest.model_version,
+            "threshold": manifest.threshold,
+            "features": manifest.features,
+            "max_batch_size": 256,
+        }
 
     @app.exception_handler(RequestValidationError)
     async def invalid_request(request: Request, error: RequestValidationError):

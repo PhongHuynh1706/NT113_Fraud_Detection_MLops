@@ -325,3 +325,15 @@ docker rm fraud-api-improved-check
 ```
 
 Các tag/RUN_ID trên là placeholder cần thay, không phải version mới đã tạo. Hiện các candidate đã train vẫn không vượt v2 nên chưa có image từ nhánh thắng thực tế; tests dùng giả lập subprocess Docker để kiểm tra gate/đóng gói/lỗi, không giả lập metrics thành kết quả model mới.
+## Hai phần độc lập: MLOps/backend và web
+
+- **MLOps/backend:** src/fraud_detection, workflow, configs, load_testing, docker, K8s, terraform; train/model/MLflow/API giữ cấu trúc hiện có. API chỉ phục vụ JSON/metrics/Swagger, không serve giao diện.
+- **Web:** [src/web/](src/web/) chứa index.html, styles.css, app.js, config.js và Dockerfile riêng. Địa chỉ giao diện mới **http://127.0.0.1:8080/**, API vẫn **http://127.0.0.1:18001**. Không còn src/fraud_detection/transaction.html hoặc HTML trong Python package.
+
+Khởi động backend với WEB_ORIGINS=http://127.0.0.1:8080,http://localhost:8080, MODEL_MANIFEST như mục7; sau đó chạy `python -m http.server 8080 --bind 127.0.0.1 --directory src/web` ở terminal khác. Có hai VS Code tasks MLOps API local và Transaction Lab web. Xem [hướng dẫn web](src/web/README.md) cho lệnh đầy đủ, cấu hình API, batch100 và Locust.
+
+Locust vẫn gọi API trực tiếp, không gọi web. Payload100 mẫu đã tạo local tại artifacts/synthetic-payload.json có thể dùng lại; random chọn một dòng mỗi request, không bảo đảm dùng đủ100 nếu số request ít. Tải payload từ giao diện rồi lưu vào artifacts để dùng làm pool.
+
+API Docker và web Docker tách build context/image. Compose profile web là tùy chọn, config Docker trỏ browser về API8000; dùng manifest Registry tránh đường dẫn Windows trong container. Đã build/smoke web image local, chưa scan web image hoặc deploy; CI kiểm tra cú pháp JS và backend tests, không Terraform hoặc deploy tự động. Các container API cũ cần build/restart để nhận CORS/metadata mới. Không tự train/build/promote model trong lần tách mã.
+
+Khởi động cả web/API local và kiểm tra readiness bằng `./workflow/start_local.ps1` sau `conda activate fraud-mlops`. Mở http://127.0.0.1:8080/; xem log/PID tại artifacts/local-app nếu API/model chưa sẵn sàng. Script không train/build/deploy và không cần MLflow server khi manifest trỏ artifact local. Chi tiết tại [web README](src/web/README.md).

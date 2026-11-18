@@ -21,11 +21,21 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
     environment:
-      MODEL_MANIFEST: /models/manifest.json
+      MODEL_MANIFEST: /models/manifest.registry.json
       MLFLOW_TRACKING_URI: http://mlflow:5000
+      WEB_ORIGINS: http://127.0.0.1:8080,http://localhost:8080
     volumes:
       - ../artifacts:/models:ro
     depends_on:
       - mlflow
+  web:
+    profiles: [web]
+    build:
+      context: ../src/web
+      dockerfile: Dockerfile
+    ports:
+      - "127.0.0.1:8080:80"
+    volumes:
+      - ../src/web/config.docker.js:/usr/share/nginx/html/config.js:ro
 volumes:
   mlflow-data:

@@ -1,6 +1,7 @@
 **
 !pyproject.toml
 !src/
-!src/**
+!src/fraud_detection/
+!src/fraud_detection/**
 !docker/
 !docker/Dockerfile
